@@ -3,7 +3,7 @@ name: Build APK
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # 수동 실행 버튼
+  workflow_dispatch:
 
 jobs:
   build:
@@ -27,13 +27,11 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-${{ hashFiles('**/*.gradle*') }}
 
-      - name: Gradle Wrapper JAR 다운로드
+      - name: Gradle Wrapper 준비
         run: |
-          mkdir -p gradle/wrapper
+          curl -L "https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradlew" -o gradlew
           curl -L "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar" -o gradle/wrapper/gradle-wrapper.jar
-
-      - name: gradlew 실행권한 부여
-        run: chmod +x gradlew
+          chmod +x gradlew
 
       - name: Debug APK 빌드
         run: ./gradlew assembleDebug --stacktrace
