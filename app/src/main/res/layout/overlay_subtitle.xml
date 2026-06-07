@@ -6,6 +6,22 @@
     android:gravity="center"
     android:padding="8dp">
 
+    <!-- STT 상태 표시 (디버그용) -->
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="초기화 중..."
+        android:textColor="#FFD700"
+        android:textSize="12sp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="3dp"
+        android:paddingBottom="3dp"
+        android:background="#CC000000"
+        android:layout_marginBottom="4dp"
+        android:visibility="visible"/>
+
     <!-- 한국어 자막 (위) -->
     <TextView
         android:id="@+id/tvOverlayKo"
