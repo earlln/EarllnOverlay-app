@@ -9,10 +9,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.graphics.Color;
 import android.graphics.PixelFormat;
-import android.media.projection.MediaProjection;
-import android.media.projection.MediaProjectionManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -25,7 +22,6 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.TextView;
 
 import androidx.core.app.NotificationCompat;
 
@@ -50,14 +46,15 @@ public class SubtitleOverlayService extends Service {
     // UI
     private WindowManager windowManager;
     private View overlayView;
-    private TextView tvKo, tvEn, tvOverlayKo, tvOverlayEn;
+    private android.widget.TextView tvOverlayKo, tvOverlayEn;
 
     // STT
     private SpeechRecognizer speechRecognizer;
     private Intent recognizerIntent;
     private boolean isListening = false;
+    private boolean shouldRestart = true;
 
-    // MLKit 번역기 (영→한)
+    // MLKit 번역기
     private Translator enKoTranslator;
     private boolean translatorReady = false;
 
@@ -66,19 +63,24 @@ public class SubtitleOverlayService extends Service {
     private int bgAlpha = 180;
     private String langMode = "both";
 
+    // 자막 자동 숨김용
+    private static final long HIDE_DELAY_MS = 4000;
+    private final Runnable hideSubtitleRunnable = this::hideSubtitles;
+
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    // 설정 업데이트 수신
     private final BroadcastReceiver settingsReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            fontSize = intent.getIntExtra("fontSize", 18);
-            bgAlpha = intent.getIntExtra("bgAlpha", 180);
-            langMode = intent.getStringExtra("langMode");
+            fontSize  = intent.getIntExtra("fontSize", 18);
+            bgAlpha   = intent.getIntExtra("bgAlpha", 180);
+            langMode  = intent.getStringExtra("langMode");
             if (langMode == null) langMode = "both";
             applySettings();
         }
     };
+
+    // ── 생명주기 ──────────────────────────────────────────────────────────────
 
     @Override
     public void onCreate() {
@@ -86,8 +88,8 @@ public class SubtitleOverlayService extends Service {
         isRunning = true;
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         createNotificationChannel();
-        registerReceiver(settingsReceiver, new IntentFilter(ACTION_UPDATE_SETTINGS),
-            Context.RECEIVER_NOT_EXPORTED);
+        registerReceiver(settingsReceiver,
+            new IntentFilter(ACTION_UPDATE_SETTINGS), Context.RECEIVER_NOT_EXPORTED);
         setupTranslator();
     }
 
@@ -95,32 +97,50 @@ public class SubtitleOverlayService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null) return START_NOT_STICKY;
 
-        // 포그라운드 알림
         startForeground(1, buildNotification());
 
-        // 설정 읽기
         fontSize = intent.getIntExtra("fontSize", 18);
-        bgAlpha = intent.getIntExtra("bgAlpha", 180);
+        bgAlpha  = intent.getIntExtra("bgAlpha", 180);
         langMode = intent.getStringExtra("langMode");
         if (langMode == null) langMode = "both";
 
-        // 오버레이 생성
         createOverlay();
-
-        // STT 시작 (마이크 직접)
         startSpeechRecognition();
 
         return START_STICKY;
     }
 
-    // ── 오버레이 뷰 생성 ──────────────────────────────────────────────────────
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        isRunning    = false;
+        shouldRestart = false;
+
+        mainHandler.removeCallbacks(hideSubtitleRunnable);
+
+        if (speechRecognizer != null) {
+            speechRecognizer.stopListening();
+            speechRecognizer.destroy();
+            speechRecognizer = null;
+        }
+        if (overlayView != null && windowManager != null) {
+            try { windowManager.removeView(overlayView); } catch (Exception ignored) {}
+        }
+        if (enKoTranslator != null) enKoTranslator.close();
+        try { unregisterReceiver(settingsReceiver); } catch (Exception ignored) {}
+    }
+
+    @Override public IBinder onBind(Intent intent) { return null; }
+
+    // ── 오버레이 ──────────────────────────────────────────────────────────────
 
     private void createOverlay() {
-        LayoutInflater inflater = LayoutInflater.from(this);
-        overlayView = inflater.inflate(R.layout.overlay_subtitle, null);
+        if (overlayView != null) return;
 
-        tvOverlayKo = overlayView.findViewById(R.id.tvOverlayKo);
-        tvOverlayEn = overlayView.findViewById(R.id.tvOverlayEn);
+        LayoutInflater inflater = LayoutInflater.from(this);
+        overlayView   = inflater.inflate(R.layout.overlay_subtitle, null);
+        tvOverlayKo   = overlayView.findViewById(R.id.tvOverlayKo);
+        tvOverlayEn   = overlayView.findViewById(R.id.tvOverlayEn);
 
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -132,7 +152,7 @@ public class SubtitleOverlayService extends Service {
             PixelFormat.TRANSLUCENT
         );
         params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-        params.y = 80; // 화면 하단에서 80px 위
+        params.y = 100;
 
         windowManager.addView(overlayView, params);
         applySettings();
@@ -141,109 +161,133 @@ public class SubtitleOverlayService extends Service {
     private void applySettings() {
         if (overlayView == null) return;
         mainHandler.post(() -> {
-            // 자막 크기
             tvOverlayKo.setTextSize(fontSize);
-            tvOverlayEn.setTextSize(fontSize - 3);
-
-            // 배경 투명도
-            int bg = Color.argb(bgAlpha, 0, 0, 0);
-            tvOverlayKo.setBackgroundColor(bg);
-            tvOverlayEn.setBackgroundColor(bg);
-
-            // 언어 모드
-            switch (langMode) {
-                case "ko":
-                    tvOverlayKo.setVisibility(View.VISIBLE);
-                    tvOverlayEn.setVisibility(View.GONE);
-                    break;
-                case "en":
-                    tvOverlayKo.setVisibility(View.GONE);
-                    tvOverlayEn.setVisibility(View.VISIBLE);
-                    break;
-                default: // both
-                    tvOverlayKo.setVisibility(View.VISIBLE);
-                    tvOverlayEn.setVisibility(View.VISIBLE);
-            }
+            tvOverlayEn.setTextSize(Math.max(12, fontSize - 3));
         });
+    }
+
+    // ── 자막 표시/숨김 ────────────────────────────────────────────────────────
+
+    private void showSubtitles(String en, String ko) {
+        mainHandler.post(() -> {
+            // 영어
+            if ("en".equals(langMode) || "both".equals(langMode)) {
+                tvOverlayEn.setText(en);
+                tvOverlayEn.setVisibility(View.VISIBLE);
+            } else {
+                tvOverlayEn.setVisibility(View.GONE);
+            }
+
+            // 한국어
+            if (("ko".equals(langMode) || "both".equals(langMode)) && ko != null) {
+                tvOverlayKo.setText(ko);
+                tvOverlayKo.setVisibility(View.VISIBLE);
+            } else if ("ko".equals(langMode) && ko == null) {
+                // 번역 오기 전까지 영어라도 표시
+                tvOverlayKo.setText(en);
+                tvOverlayKo.setVisibility(View.VISIBLE);
+            } else if (!"ko".equals(langMode)) {
+                // both 모드에서 번역 아직 없으면 숨김 유지 (EN은 이미 표시)
+            }
+
+            // 4초 후 자동 숨김
+            mainHandler.removeCallbacks(hideSubtitleRunnable);
+            mainHandler.postDelayed(hideSubtitleRunnable, HIDE_DELAY_MS);
+        });
+    }
+
+    private void hideSubtitles() {
+        if (tvOverlayKo != null) tvOverlayKo.setVisibility(View.GONE);
+        if (tvOverlayEn != null) tvOverlayEn.setVisibility(View.GONE);
     }
 
     // ── Google STT ────────────────────────────────────────────────────────────
 
     private void startSpeechRecognition() {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            Log.e(TAG, "SpeechRecognizer 사용 불가");
+            Log.e(TAG, "SpeechRecognizer 사용 불가 — Google 앱 설치 확인 필요");
             return;
+        }
+
+        buildRecognizerIntent();
+        createAndStartRecognizer();
+    }
+
+    private void buildRecognizerIntent() {
+        recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.ENGLISH);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        // 침묵 감지 시간 늘려서 끊김 줄임
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 3000L);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L);
+    }
+
+    private void createAndStartRecognizer() {
+        if (speechRecognizer != null) {
+            speechRecognizer.destroy();
         }
 
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
         speechRecognizer.setRecognitionListener(new RecognitionListener() {
 
             @Override
-            public void onReadyForSpeech(Bundle params) {
-                isListening = true;
-                Log.d(TAG, "STT 준비됨");
-            }
-
-            @Override
-            public void onPartialResults(Bundle partialResults) {
-                // 실시간 중간 결과 표시
-                ArrayList<String> partial = partialResults
-                    .getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                if (partial != null && !partial.isEmpty()) {
-                    String text = partial.get(0);
-                    showEnglish(text);
-                    translateToKorean(text);
+            public void onPartialResults(Bundle b) {
+                // 중간 결과 — 영어 즉시 표시, 번역은 최종에서
+                ArrayList<String> list = b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                if (list != null && !list.isEmpty() && !list.get(0).isEmpty()) {
+                    String text = list.get(0);
+                    showSubtitles(text, null);
                 }
             }
 
             @Override
-            public void onResults(Bundle results) {
-                // 최종 결과
-                ArrayList<String> matches = results
-                    .getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                if (matches != null && !matches.isEmpty()) {
-                    String text = matches.get(0);
-                    showEnglish(text);
-                    translateToKorean(text);
+            public void onResults(Bundle b) {
+                ArrayList<String> list = b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                if (list != null && !list.isEmpty() && !list.get(0).isEmpty()) {
+                    String text = list.get(0);
+                    // 번역 후 한+영 동시 표시
+                    translateAndShow(text);
                 }
-                // 연속 인식을 위해 재시작
-                mainHandler.postDelayed(() -> restartListening(), 300);
+                // 즉시 재시작
+                if (shouldRestart) mainHandler.postDelayed(() -> restartListening(), 200);
             }
 
-            @Override public void onError(int error) {
-                Log.w(TAG, "STT 오류: " + error);
+            @Override
+            public void onError(int error) {
+                Log.w(TAG, "STT 오류 코드: " + error);
                 isListening = false;
-                // 오류 시 재시작 (네트워크 오류 등)
-                mainHandler.postDelayed(() -> restartListening(), 1000);
+                long delay = (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) ? 1000L : 500L;
+                if (shouldRestart) mainHandler.postDelayed(() -> restartListening(), delay);
             }
 
+            @Override public void onReadyForSpeech(Bundle p) { isListening = true; }
             @Override public void onBeginningOfSpeech() {}
-            @Override public void onRmsChanged(float rmsdB) {}
-            @Override public void onBufferReceived(byte[] buffer) {}
+            @Override public void onRmsChanged(float r) {}
+            @Override public void onBufferReceived(byte[] b) {}
             @Override public void onEndOfSpeech() { isListening = false; }
-            @Override public void onEvent(int eventType, Bundle params) {}
+            @Override public void onEvent(int t, Bundle p) {}
         });
-
-        recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.ENGLISH);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true); // 중간 결과 활성화
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
 
         speechRecognizer.startListening(recognizerIntent);
         isListening = true;
     }
 
     private void restartListening() {
-        if (!isRunning) return;
-        if (speechRecognizer != null) {
-            try {
+        if (!shouldRestart || !isRunning) return;
+        try {
+            if (speechRecognizer != null) {
                 speechRecognizer.startListening(recognizerIntent);
                 isListening = true;
-            } catch (Exception e) {
-                Log.e(TAG, "재시작 실패", e);
+            } else {
+                createAndStartRecognizer();
             }
+        } catch (Exception e) {
+            Log.e(TAG, "재시작 실패, 재생성", e);
+            mainHandler.postDelayed(() -> createAndStartRecognizer(), 1000);
         }
     }
 
@@ -256,94 +300,44 @@ public class SubtitleOverlayService extends Service {
             .build();
         enKoTranslator = Translation.getClient(options);
 
-        // 번역 모델 다운로드 (첫 실행 시)
         enKoTranslator.downloadModelIfNeeded()
             .addOnSuccessListener(v -> {
                 translatorReady = true;
                 Log.d(TAG, "번역 모델 준비 완료");
             })
-            .addOnFailureListener(e -> Log.e(TAG, "번역 모델 다운로드 실패", e));
+            .addOnFailureListener(e -> Log.e(TAG, "번역 모델 다운로드 실패: " + e.getMessage()));
     }
 
-    private void translateToKorean(String englishText) {
-        if (!translatorReady || englishText == null || englishText.isEmpty()) return;
+    private void translateAndShow(String en) {
+        // 번역 전에 영어 먼저 표시
+        showSubtitles(en, "ko".equals(langMode) ? en : null);
 
-        enKoTranslator.translate(englishText)
-            .addOnSuccessListener(koreanText -> showKorean(koreanText))
-            .addOnFailureListener(e -> Log.e(TAG, "번역 실패", e));
-    }
+        if (!translatorReady || "en".equals(langMode)) return;
 
-    // ── 자막 표시 ─────────────────────────────────────────────────────────────
-
-    private void showEnglish(String text) {
-        mainHandler.post(() -> {
-            if (tvOverlayEn != null) {
-                tvOverlayEn.setText(text);
-                tvOverlayEn.setAlpha(1f);
-            }
-        });
-    }
-
-    private void showKorean(String text) {
-        mainHandler.post(() -> {
-            if (tvOverlayKo != null) {
-                tvOverlayKo.setText(text);
-                tvOverlayKo.setAlpha(1f);
-            }
-        });
+        enKoTranslator.translate(en)
+            .addOnSuccessListener(ko -> showSubtitles(en, ko))
+            .addOnFailureListener(e -> Log.e(TAG, "번역 실패: " + e.getMessage()));
     }
 
     // ── 알림 ─────────────────────────────────────────────────────────────────
 
     private void createNotificationChannel() {
-        NotificationChannel channel = new NotificationChannel(
+        NotificationChannel ch = new NotificationChannel(
             CHANNEL_ID, "자막 오버레이", NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription("실시간 자막 오버레이 서비스");
-        NotificationManager nm = getSystemService(NotificationManager.class);
-        nm.createNotificationChannel(channel);
+        ch.setDescription("실시간 자막 오버레이 서비스");
+        getSystemService(NotificationManager.class).createNotificationChannel(ch);
     }
 
     private Notification buildNotification() {
-        Intent stopIntent = new Intent(this, SubtitleOverlayService.class);
-        stopIntent.setAction("STOP");
-        PendingIntent stopPi = PendingIntent.getService(this, 0, stopIntent,
-            PendingIntent.FLAG_IMMUTABLE);
-
-        Intent openIntent = new Intent(this, MainActivity.class);
-        PendingIntent openPi = PendingIntent.getActivity(this, 0, openIntent,
-            PendingIntent.FLAG_IMMUTABLE);
+        PendingIntent openPi = PendingIntent.getActivity(this, 0,
+            new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
 
         return new NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("SubOverlay 실행 중")
             .setContentText("실시간 자막 오버레이 활성화됨")
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentIntent(openPi)
-            .addAction(android.R.drawable.ic_media_pause, "중지", stopPi)
             .setOngoing(true)
             .build();
     }
-
-    // ── 정리 ─────────────────────────────────────────────────────────────────
-
-    @Override
-    public void onDestroy() {
-        super.onDestroy();
-        isRunning = false;
-
-        if (speechRecognizer != null) {
-            speechRecognizer.destroy();
-        }
-        if (overlayView != null && windowManager != null) {
-            windowManager.removeView(overlayView);
-        }
-        if (enKoTranslator != null) {
-            enKoTranslator.close();
-        }
-        try {
-            unregisterReceiver(settingsReceiver);
-        } catch (Exception ignored) {}
-    }
-
-    @Override
-    public IBinder onBind(Intent intent) { return null; }
 }
