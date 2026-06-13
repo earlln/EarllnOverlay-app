@@ -175,6 +175,30 @@ public class SubtitleOverlayService extends Service {
             return;
         }
 
+        buildRecognizerIntent();
+        createAndStartRecognizer();
+    }
+
+    private void buildRecognizerIntent() {
+        recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.ENGLISH);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        // 침묵 허용 시간 대폭 연장 (끊김 방지)
+        recognizerIntent.putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 8000L);
+        recognizerIntent.putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 8000L);
+        recognizerIntent.putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 15000L);
+    }
+
+    private void createAndStartRecognizer() {
+        // 매번 새로 만들어야 RECOGNIZER_BUSY 오류 방지
+        if (speechRecognizer != null) {
+            try { speechRecognizer.destroy(); } catch (Exception ignored) {}
+            speechRecognizer = null;
+        }
+
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
         speechRecognizer.setRecognitionListener(new RecognitionListener() {
 
@@ -186,7 +210,6 @@ public class SubtitleOverlayService extends Service {
 
             @Override
             public void onPartialResults(Bundle partialResults) {
-                // 실시간 중간 결과 표시
                 ArrayList<String> partial = partialResults
                     .getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
                 if (partial != null && !partial.isEmpty()) {
@@ -198,7 +221,6 @@ public class SubtitleOverlayService extends Service {
 
             @Override
             public void onResults(Bundle results) {
-                // 최종 결과
                 ArrayList<String> matches = results
                     .getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
                 if (matches != null && !matches.isEmpty()) {
@@ -207,14 +229,25 @@ public class SubtitleOverlayService extends Service {
                     translateToKorean(text);
                 }
                 // 연속 인식을 위해 재시작
-                mainHandler.postDelayed(() -> restartListening(), 300);
+                mainHandler.postDelayed(() -> restartListening(300), 300);
             }
 
-            @Override public void onError(int error) {
-                Log.w(TAG, "STT 오류: " + error);
+            @Override
+            public void onError(int error) {
+                Log.w(TAG, "STT 오류 코드: " + error);
                 isListening = false;
-                // 오류 시 재시작 (네트워크 오류 등)
-                mainHandler.postDelayed(() -> restartListening(), 1000);
+                switch (error) {
+                    case SpeechRecognizer.ERROR_NO_MATCH:       // 7: 소리 없음 → 즉시 재시작
+                    case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: // 6: 음성 타임아웃 → 즉시 재시작
+                        mainHandler.postDelayed(() -> restartListening(0), 200);
+                        break;
+                    case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: // 8: 바쁨 → 잠시 후 재시작
+                        mainHandler.postDelayed(() -> restartListening(1500), 1500);
+                        break;
+                    default:
+                        mainHandler.postDelayed(() -> restartListening(1000), 1000);
+                        break;
+                }
             }
 
             @Override public void onBeginningOfSpeech() {}
@@ -224,27 +257,14 @@ public class SubtitleOverlayService extends Service {
             @Override public void onEvent(int eventType, Bundle params) {}
         });
 
-        recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.ENGLISH);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true); // 중간 결과 활성화
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-
         speechRecognizer.startListening(recognizerIntent);
         isListening = true;
     }
 
-    private void restartListening() {
+    private void restartListening(long delayMs) {
         if (!isRunning) return;
-        if (speechRecognizer != null) {
-            try {
-                speechRecognizer.startListening(recognizerIntent);
-                isListening = true;
-            } catch (Exception e) {
-                Log.e(TAG, "재시작 실패", e);
-            }
-        }
+        // 재시작 시 항상 새 인스턴스 생성 (RECOGNIZER_BUSY 방지)
+        createAndStartRecognizer();
     }
 
     // ── MLKit 번역 ────────────────────────────────────────────────────────────
