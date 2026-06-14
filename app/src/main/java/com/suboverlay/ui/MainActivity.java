@@ -128,12 +128,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startSubtitleService(int resultCode, Intent data) {
-        // static 필드로 직접 전달 (Intent Parcelable 직렬화 문제 우회)
-        SubtitleOverlayService.pendingResultCode = resultCode;
-        SubtitleOverlayService.pendingData = data;
+        // Activity에서 직접 MediaProjection 생성 후 static으로 전달 (올바른 방식)
+        try {
+            SubtitleOverlayService.pendingMediaProjection =
+                projectionManager.getMediaProjection(resultCode, data);
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "MediaProjection 생성 실패: " + e.getMessage());
+            SubtitleOverlayService.pendingMediaProjection = null;
+        }
 
         Intent serviceIntent = new Intent(this, SubtitleOverlayService.class);
-        serviceIntent.putExtra("resultCode", resultCode);
         serviceIntent.putExtra("fontSize", (int) binding.sliderFontSize.getValue());
         serviceIntent.putExtra("bgAlpha", (int) binding.sliderBgAlpha.getValue());
         serviceIntent.putExtra("langMode", getSelectedLang());

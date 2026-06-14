@@ -16,7 +16,6 @@ import android.media.AudioPlaybackCaptureConfiguration;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
 import android.media.projection.MediaProjection;
-import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -57,9 +56,8 @@ public class SubtitleOverlayService extends Service {
     public static final String ACTION_UPDATE_SETTINGS = "com.suboverlay.UPDATE_SETTINGS";
     public static boolean isRunning = false;
 
-    // MediaProjection 데이터를 static으로 전달 (Intent Parcelable 문제 우회)
-    public static int pendingResultCode = -1;
-    public static Intent pendingData = null;
+    // Activity에서 생성한 MediaProjection 객체를 직접 전달 (권장 방식)
+    public static MediaProjection pendingMediaProjection = null;
 
     private static final String TAG = "SubOverlay";
     private static final String CHANNEL_ID = "subtitle_overlay_channel";
@@ -140,32 +138,13 @@ public class SubtitleOverlayService extends Service {
         audioSource = intent.getStringExtra("audioSource");
         if (audioSource == null) audioSource = "internal";
 
-        // MediaProjection 토큰 받기 (static 필드 우선, intent 폴백)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            int resultCode = pendingResultCode != -1
-                ? pendingResultCode : intent.getIntExtra("resultCode", -1);
-            Intent data = pendingData != null
-                ? pendingData
-                : ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-                    ? intent.getParcelableExtra("data", Intent.class)
-                    : intent.getParcelableExtra("data"));
-            // 사용 후 초기화
-            pendingResultCode = -1;
-            pendingData = null;
-
-            if (resultCode != -1 && data != null) {
-                try {
-                    MediaProjectionManager mpm =
-                        (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
-                    mediaProjection = mpm.getMediaProjection(resultCode, data);
-                    Log.d(TAG, "MediaProjection 획득 성공");
-                } catch (Exception e) {
-                    Log.e(TAG, "MediaProjection 획득 실패: " + e.getMessage());
-                    mediaProjection = null;
-                }
-            } else {
-                Log.w(TAG, "MediaProjection 데이터 없음: resultCode=" + resultCode);
-            }
+        // Activity에서 미리 생성한 MediaProjection 객체를 받음
+        if (pendingMediaProjection != null) {
+            mediaProjection = pendingMediaProjection;
+            pendingMediaProjection = null;
+            Log.d(TAG, "MediaProjection 수신 성공");
+        } else {
+            Log.w(TAG, "MediaProjection 없음 - 마이크 모드로 전환");
         }
 
         createOverlay();
