@@ -78,6 +78,7 @@ public class SubtitleOverlayService extends Service {
     // Vosk 오프라인 STT
     private Model voskModel;
     private Recognizer voskRecognizer;
+    private String lastPartial = ""; // 중복 부분 결과 방지
 
     // MLKit 번역
     private Translator enKoTranslator;
@@ -352,10 +353,20 @@ public class SubtitleOverlayService extends Service {
         try {
             JSONObject obj = new JSONObject(json);
             String text = isPartial ? obj.optString("partial") : obj.optString("text");
-            if (text != null && !text.trim().isEmpty()) {
-                // 인식된 텍스트를 상태창에도 표시 (Vosk 작동 확인용)
-                setStatus((isPartial ? "💬 " : "✅ ") + text.trim());
-                translateAndShow(text.trim());
+            if (text == null || text.trim().isEmpty()) return;
+            text = text.trim();
+
+            if (isPartial) {
+                // 부분 결과: 같은 텍스트면 무시, 영어만 표시 (번역 요청 안 함)
+                if (text.equals(lastPartial)) return;
+                lastPartial = text;
+                setStatus("💬 " + text);
+                showSubtitles(text, null); // 영어만 즉시 표시
+            } else {
+                // 최종 결과: 번역까지 수행
+                lastPartial = "";
+                setStatus("✅ " + text);
+                translateAndShow(text);
             }
         } catch (Exception e) {
             Log.w(TAG, "JSON 파싱 실패: " + json);
