@@ -128,9 +128,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startSubtitleService(int resultCode, Intent data) {
+        // static 필드로 직접 전달 (Intent Parcelable 직렬화 문제 우회)
+        SubtitleOverlayService.pendingResultCode = resultCode;
+        SubtitleOverlayService.pendingData = data;
+
         Intent serviceIntent = new Intent(this, SubtitleOverlayService.class);
         serviceIntent.putExtra("resultCode", resultCode);
-        serviceIntent.putExtra("data", data);
         serviceIntent.putExtra("fontSize", (int) binding.sliderFontSize.getValue());
         serviceIntent.putExtra("bgAlpha", (int) binding.sliderBgAlpha.getValue());
         serviceIntent.putExtra("langMode", getSelectedLang());

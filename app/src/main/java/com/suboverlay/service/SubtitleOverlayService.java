@@ -57,6 +57,10 @@ public class SubtitleOverlayService extends Service {
     public static final String ACTION_UPDATE_SETTINGS = "com.suboverlay.UPDATE_SETTINGS";
     public static boolean isRunning = false;
 
+    // MediaProjection 데이터를 static으로 전달 (Intent Parcelable 문제 우회)
+    public static int pendingResultCode = -1;
+    public static Intent pendingData = null;
+
     private static final String TAG = "SubOverlay";
     private static final String CHANNEL_ID = "subtitle_overlay_channel";
     private static final int SAMPLE_RATE = 16000;
@@ -136,13 +140,19 @@ public class SubtitleOverlayService extends Service {
         audioSource = intent.getStringExtra("audioSource");
         if (audioSource == null) audioSource = "internal";
 
-        // MediaProjection 토큰 받기 (내부 오디오 캡처용, API 29+)
+        // MediaProjection 토큰 받기 (static 필드 우선, intent 폴백)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            int resultCode = intent.getIntExtra("resultCode", -1);
-            // Android 13(API 33)부터 타입 명시 필요
-            Intent data = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-                ? intent.getParcelableExtra("data", Intent.class)
-                : intent.getParcelableExtra("data");
+            int resultCode = pendingResultCode != -1
+                ? pendingResultCode : intent.getIntExtra("resultCode", -1);
+            Intent data = pendingData != null
+                ? pendingData
+                : ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                    ? intent.getParcelableExtra("data", Intent.class)
+                    : intent.getParcelableExtra("data"));
+            // 사용 후 초기화
+            pendingResultCode = -1;
+            pendingData = null;
+
             if (resultCode != -1 && data != null) {
                 try {
                     MediaProjectionManager mpm =
@@ -196,6 +206,13 @@ public class SubtitleOverlayService extends Service {
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }
+
+    /** 앱을 최근 앱에서 스와이프로 종료할 때 서비스도 함께 종료 */
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        super.onTaskRemoved(rootIntent);
+        stopSelf();
+    }
 
     // ── Vosk 모델 로드 ───────────────────────────────────────────────────────
 
@@ -476,6 +493,9 @@ public class SubtitleOverlayService extends Service {
 
     private void showSubtitles(String en, String ko) {
         mainHandler.post(() -> {
+            // 자막 표시 중엔 status 숨김 (중복 표시 방지)
+            if (tvStatus != null) tvStatus.setVisibility(View.GONE);
+
             if (!"ko".equals(langMode)) {
                 tvOverlayEn.setText(en);
                 tvOverlayEn.setVisibility(View.VISIBLE);
@@ -496,6 +516,8 @@ public class SubtitleOverlayService extends Service {
     private void hideSubtitles() {
         if (tvOverlayKo != null) tvOverlayKo.setVisibility(View.GONE);
         if (tvOverlayEn != null) tvOverlayEn.setVisibility(View.GONE);
+        // 자막 없을 때만 status 다시 표시
+        if (tvStatus != null) tvStatus.setVisibility(View.VISIBLE);
     }
 
     private void setStatus(String msg) {
