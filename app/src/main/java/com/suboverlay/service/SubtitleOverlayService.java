@@ -422,15 +422,13 @@ public class SubtitleOverlayService extends Service {
             text = text.trim();
 
             if (isPartial) {
-                // 부분 결과: 같은 텍스트면 무시, 영어만 표시 (번역 요청 안 함)
+                // 부분 결과: 같은 텍스트면 무시, 영어만 즉시 표시 (번역 요청 안 함)
                 if (text.equals(lastPartial)) return;
                 lastPartial = text;
-                setStatus("💬 " + text);
-                showSubtitles(text, null); // 영어만 즉시 표시
+                showSubtitles(text, null);
             } else {
-                // 최종 결과: 번역까지 수행
+                // 최종 결과: 영어 즉시 표시 + 번역 후 한국어 추가
                 lastPartial = "";
-                setStatus("✅ " + text);
                 translateAndShow(text);
             }
         } catch (Exception e) {
@@ -493,21 +491,25 @@ public class SubtitleOverlayService extends Service {
 
     private void showSubtitles(String en, String ko) {
         mainHandler.post(() -> {
-            // 자막 표시 중엔 status 숨김 (중복 표시 방지)
+            // 자막 표시 중엔 status 숨김
             if (tvStatus != null) tvStatus.setVisibility(View.GONE);
 
+            // 영어 자막: ko 전용 모드가 아닐 때만 표시
             if (!"ko".equals(langMode)) {
                 tvOverlayEn.setText(en);
                 tvOverlayEn.setVisibility(View.VISIBLE);
             } else {
                 tvOverlayEn.setVisibility(View.GONE);
             }
-            if (!"en".equals(langMode)) {
-                tvOverlayKo.setText(ko != null ? ko : en);
+
+            // 한국어 자막: 실제 번역된 텍스트가 있을 때만 표시 (null이면 GONE)
+            if (!"en".equals(langMode) && ko != null) {
+                tvOverlayKo.setText(ko);
                 tvOverlayKo.setVisibility(View.VISIBLE);
             } else {
                 tvOverlayKo.setVisibility(View.GONE);
             }
+
             mainHandler.removeCallbacks(hideRunnable);
             mainHandler.postDelayed(hideRunnable, HIDE_DELAY_MS);
         });
