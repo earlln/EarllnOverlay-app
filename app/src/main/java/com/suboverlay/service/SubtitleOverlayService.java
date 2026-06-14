@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.pm.ServiceInfo;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -129,7 +130,17 @@ public class SubtitleOverlayService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null) return START_NOT_STICKY;
 
-        startForeground(1, buildNotification());
+        // API 29+: 서비스 타입 명시 필수 → MediaProjection 토큰 활성화
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) { // API 30+
+            startForeground(1, buildNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION |
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { // API 29
+            startForeground(1, buildNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+        } else {
+            startForeground(1, buildNotification());
+        }
 
         fontSize = intent.getIntExtra("fontSize", 18);
         bgAlpha  = intent.getIntExtra("bgAlpha", 180);
@@ -295,7 +306,8 @@ public class SubtitleOverlayService extends Service {
             setStatus("🎤 마이크 캡처 중\n(Android 10 미만 - 내부오디오 미지원)");
             audioRecord = buildMicAudioRecord(bufferSize);
         } else {
-            setStatus("⚠️ 화면 캡처 권한 없음\n앱을 재시작하고 권한을 허용해주세요");
+            // 내부 오디오 불가 → 마이크로 조용히 전환
+            setStatus("🎤 마이크 캡처 중");
             audioRecord = buildMicAudioRecord(bufferSize);
         }
 
