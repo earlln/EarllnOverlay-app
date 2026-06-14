@@ -10,13 +10,17 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.PixelFormat;
-import android.os.Bundle;
+import android.media.AudioAttributes;
+import android.media.AudioFormat;
+import android.media.AudioPlaybackCaptureConfiguration;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.speech.RecognitionListener;
-import android.speech.RecognizerIntent;
-import android.speech.SpeechRecognizer;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -24,6 +28,7 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.TextView;
 
+import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
 
 import com.google.mlkit.nl.translate.TranslateLanguage;
@@ -33,31 +38,41 @@ import com.google.mlkit.nl.translate.TranslatorOptions;
 import com.suboverlay.R;
 import com.suboverlay.ui.MainActivity;
 
-import java.util.ArrayList;
-import java.util.Locale;
+import org.json.JSONObject;
+import org.vosk.Model;
+import org.vosk.Recognizer;
+import org.vosk.android.StorageService;
+
+import java.io.IOException;
 
 public class SubtitleOverlayService extends Service {
 
     public static final String ACTION_UPDATE_SETTINGS = "com.suboverlay.UPDATE_SETTINGS";
     public static boolean isRunning = false;
 
-    private static final String CHANNEL_ID = "subtitle_overlay_channel";
     private static final String TAG = "SubOverlay";
-    private static final long HIDE_DELAY_MS = 4000;
+    private static final String CHANNEL_ID = "subtitle_overlay_channel";
+    private static final int SAMPLE_RATE = 16000;
+    private static final long HIDE_DELAY_MS = 5000;
 
     // UI
     private WindowManager windowManager;
     private View overlayView;
     private TextView tvOverlayKo, tvOverlayEn, tvStatus;
 
-    // STT
-    private SpeechRecognizer speechRecognizer;
-    private Intent recognizerIntent;
-    private boolean isListening = false;
-    private boolean shouldRestart = true;
-    private int restartCount = 0;
+    // 오디오 캡처
+    private AudioRecord audioRecord;
+    private Thread recordingThread;
+    private volatile boolean captureRunning = false;
 
-    // MLKit 번역기
+    // MediaProjection (내부 오디오 캡처용)
+    private MediaProjection mediaProjection;
+
+    // Vosk 오프라인 STT
+    private Model voskModel;
+    private Recognizer voskRecognizer;
+
+    // MLKit 번역
     private Translator enKoTranslator;
     private boolean translatorReady = false;
 
@@ -67,7 +82,7 @@ public class SubtitleOverlayService extends Service {
     private String langMode = "both";
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final Runnable hideSubtitleRunnable = this::hideSubtitles;
+    private final Runnable hideRunnable = this::hideSubtitles;
 
     private final BroadcastReceiver settingsReceiver = new BroadcastReceiver() {
         @Override
@@ -104,16 +119,35 @@ public class SubtitleOverlayService extends Service {
         langMode = intent.getStringExtra("langMode");
         if (langMode == null) langMode = "both";
 
-        createOverlay();
-        setStatus("STT 초기화 중...");
-
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            setStatus("❌ Google STT 사용 불가\nGoogle 앱 업데이트 필요");
-            return START_NOT_STICKY;
+        // MediaProjection 토큰 받기 (내부 오디오 캡처용, API 29+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            int resultCode = intent.getIntExtra("resultCode", -1);
+            Intent data = intent.getParcelableExtra("data");
+            if (resultCode != -1 && data != null) {
+                MediaProjectionManager mpm =
+                    (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+                mediaProjection = mpm.getMediaProjection(resultCode, data);
+            }
         }
 
-        buildRecognizerIntent();
-        createAndStartRecognizer();
+        createOverlay();
+        setStatus("🔄 Vosk 모델 로딩 중...\n(첫 실행 시 약 40MB 다운로드)");
+
+        // Vosk 모델 비동기 로드 (자동 다운로드 포함)
+        StorageService.unpack(this, "model-en-us", "model",
+            model -> {
+                voskModel = model;
+                try {
+                    voskRecognizer = new Recognizer(model, SAMPLE_RATE);
+                } catch (IOException e) {
+                    setStatus("❌ Recognizer 생성 실패: " + e.getMessage());
+                    return;
+                }
+                setStatus("✅ 준비 완료! 영상을 재생하세요.");
+                startAudioCapture();
+            },
+            e -> setStatus("❌ 모델 로드 실패: " + e.getMessage())
+        );
 
         return START_STICKY;
     }
@@ -121,15 +155,22 @@ public class SubtitleOverlayService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        isRunning     = false;
-        shouldRestart = false;
+        isRunning = false;
+        captureRunning = false;
         mainHandler.removeCallbacksAndMessages(null);
 
-        if (speechRecognizer != null) {
-            try { speechRecognizer.stopListening(); } catch (Exception ignored) {}
-            try { speechRecognizer.destroy(); }      catch (Exception ignored) {}
-            speechRecognizer = null;
+        if (audioRecord != null) {
+            try { audioRecord.stop(); }    catch (Exception ignored) {}
+            try { audioRecord.release(); } catch (Exception ignored) {}
+            audioRecord = null;
         }
+        if (recordingThread != null) {
+            recordingThread.interrupt();
+            recordingThread = null;
+        }
+        if (voskRecognizer != null) { voskRecognizer.close(); voskRecognizer = null; }
+        if (voskModel != null)      { voskModel.close();      voskModel = null; }
+        if (mediaProjection != null) { mediaProjection.stop(); mediaProjection = null; }
         if (overlayView != null && windowManager != null) {
             try { windowManager.removeView(overlayView); } catch (Exception ignored) {}
         }
@@ -139,11 +180,134 @@ public class SubtitleOverlayService extends Service {
 
     @Override public IBinder onBind(Intent intent) { return null; }
 
-    // ── 오버레이 ──────────────────────────────────────────────────────────────
+    // ── 오디오 캡처 ──────────────────────────────────────────────────────────
+
+    private void startAudioCapture() {
+        int bufferSize = AudioRecord.getMinBufferSize(
+            SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) * 4;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && mediaProjection != null) {
+            // ✅ 내부 오디오 캡처: 영상 오디오를 직접 받음 → 마이크 X, 오디오 포커스 충돌 X
+            audioRecord = buildInternalAudioRecord(bufferSize);
+            if (audioRecord == null || audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+                setStatus("⚠️ 내부 오디오 불가 → 마이크로 대체");
+                audioRecord = buildMicAudioRecord(bufferSize);
+            } else {
+                setStatus("🎬 내부 오디오 캡처 중 (영상 방해 없음)");
+            }
+        } else {
+            // 폴백: 마이크 사용 (SpeechRecognizer보다 오디오 포커스 충돌 없음)
+            audioRecord = buildMicAudioRecord(bufferSize);
+            setStatus("🎤 마이크 캡처 중");
+        }
+
+        if (audioRecord == null || audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+            setStatus("❌ AudioRecord 초기화 실패");
+            return;
+        }
+
+        audioRecord.startRecording();
+        captureRunning = true;
+
+        recordingThread = new Thread(this::captureLoop, "VoskCaptureThread");
+        recordingThread.setDaemon(true);
+        recordingThread.start();
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.Q)
+    private AudioRecord buildInternalAudioRecord(int bufferSize) {
+        try {
+            AudioPlaybackCaptureConfiguration captureConfig =
+                new AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
+                    .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                    .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                    .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                    .build();
+
+            AudioFormat audioFormat = new AudioFormat.Builder()
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setSampleRate(SAMPLE_RATE)
+                .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                .build();
+
+            return new AudioRecord.Builder()
+                .setAudioPlaybackCaptureConfig(captureConfig)
+                .setAudioFormat(audioFormat)
+                .setBufferSizeInBytes(bufferSize)
+                .build();
+        } catch (Exception e) {
+            Log.e(TAG, "내부 오디오 캡처 생성 실패", e);
+            return null;
+        }
+    }
+
+    private AudioRecord buildMicAudioRecord(int bufferSize) {
+        try {
+            return new AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize
+            );
+        } catch (Exception e) {
+            Log.e(TAG, "마이크 AudioRecord 생성 실패", e);
+            return null;
+        }
+    }
+
+    /** 백그라운드 스레드: 오디오 읽어서 Vosk에 전달 */
+    private void captureLoop() {
+        byte[] buffer = new byte[4096];
+        while (captureRunning && !Thread.currentThread().isInterrupted()) {
+            int bytesRead = audioRecord.read(buffer, 0, buffer.length);
+            if (bytesRead <= 0 || voskRecognizer == null) continue;
+
+            if (voskRecognizer.acceptWaveForm(buffer, bytesRead)) {
+                parseAndShow(voskRecognizer.getResult(), false);   // 최종 결과
+            } else {
+                parseAndShow(voskRecognizer.getPartialResult(), true); // 실시간 중간 결과
+            }
+        }
+    }
+
+    /** Vosk JSON 파싱: {"text":"..."} 또는 {"partial":"..."} */
+    private void parseAndShow(String json, boolean isPartial) {
+        try {
+            JSONObject obj = new JSONObject(json);
+            String text = isPartial ? obj.optString("partial") : obj.optString("text");
+            if (text != null && !text.trim().isEmpty()) {
+                translateAndShow(text.trim());
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "JSON 파싱 실패: " + json);
+        }
+    }
+
+    // ── MLKit 번역 ────────────────────────────────────────────────────────────
+
+    private void setupTranslator() {
+        enKoTranslator = Translation.getClient(new TranslatorOptions.Builder()
+            .setSourceLanguage(TranslateLanguage.ENGLISH)
+            .setTargetLanguage(TranslateLanguage.KOREAN)
+            .build());
+        enKoTranslator.downloadModelIfNeeded()
+            .addOnSuccessListener(v -> { translatorReady = true; Log.d(TAG, "번역 모델 OK"); })
+            .addOnFailureListener(e -> Log.e(TAG, "번역 모델 실패: " + e.getMessage()));
+    }
+
+    private void translateAndShow(String en) {
+        showSubtitles(en, null); // 영어 즉시 표시
+        if (!translatorReady || "en".equals(langMode)) return;
+        enKoTranslator.translate(en)
+            .addOnSuccessListener(ko -> showSubtitles(en, ko))
+            .addOnFailureListener(e -> Log.e(TAG, "번역 실패: " + e.getMessage()));
+    }
+
+    // ── 오버레이 UI ───────────────────────────────────────────────────────────
 
     private void createOverlay() {
         if (overlayView != null) return;
-
         overlayView = LayoutInflater.from(this).inflate(R.layout.overlay_subtitle, null);
         tvOverlayKo = overlayView.findViewById(R.id.tvOverlayKo);
         tvOverlayEn = overlayView.findViewById(R.id.tvOverlayEn);
@@ -173,7 +337,29 @@ public class SubtitleOverlayService extends Service {
         });
     }
 
-    // ── 상태 표시 ─────────────────────────────────────────────────────────────
+    private void showSubtitles(String en, String ko) {
+        mainHandler.post(() -> {
+            if (!"ko".equals(langMode)) {
+                tvOverlayEn.setText(en);
+                tvOverlayEn.setVisibility(View.VISIBLE);
+            } else {
+                tvOverlayEn.setVisibility(View.GONE);
+            }
+            if (!"en".equals(langMode)) {
+                tvOverlayKo.setText(ko != null ? ko : en);
+                tvOverlayKo.setVisibility(View.VISIBLE);
+            } else {
+                tvOverlayKo.setVisibility(View.GONE);
+            }
+            mainHandler.removeCallbacks(hideRunnable);
+            mainHandler.postDelayed(hideRunnable, HIDE_DELAY_MS);
+        });
+    }
+
+    private void hideSubtitles() {
+        if (tvOverlayKo != null) tvOverlayKo.setVisibility(View.GONE);
+        if (tvOverlayEn != null) tvOverlayEn.setVisibility(View.GONE);
+    }
 
     private void setStatus(String msg) {
         Log.d(TAG, "STATUS: " + msg);
@@ -183,148 +369,6 @@ public class SubtitleOverlayService extends Service {
                 tvStatus.setVisibility(View.VISIBLE);
             }
         });
-    }
-
-    // ── 자막 표시/숨김 ────────────────────────────────────────────────────────
-
-    private void showSubtitles(String en, String ko) {
-        mainHandler.post(() -> {
-            if ("en".equals(langMode) || "both".equals(langMode)) {
-                tvOverlayEn.setText(en);
-                tvOverlayEn.setVisibility(View.VISIBLE);
-            } else {
-                tvOverlayEn.setVisibility(View.GONE);
-            }
-
-            if ("ko".equals(langMode) || "both".equals(langMode)) {
-                // 번역 전이면 영어라도 표시
-                tvOverlayKo.setText(ko != null ? ko : en);
-                tvOverlayKo.setVisibility(View.VISIBLE);
-            } else {
-                tvOverlayKo.setVisibility(View.GONE);
-            }
-
-            mainHandler.removeCallbacks(hideSubtitleRunnable);
-            mainHandler.postDelayed(hideSubtitleRunnable, HIDE_DELAY_MS);
-        });
-    }
-
-    private void hideSubtitles() {
-        if (tvOverlayKo != null) tvOverlayKo.setVisibility(View.GONE);
-        if (tvOverlayEn != null) tvOverlayEn.setVisibility(View.GONE);
-    }
-
-    // ── Google STT ────────────────────────────────────────────────────────────
-
-    private void buildRecognizerIntent() {
-        recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.ENGLISH);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-        // 침묵 허용 시간 연장 → 영상 끊김에도 재시작 안 함
-        recognizerIntent.putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 8000L);
-        recognizerIntent.putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 8000L);
-        recognizerIntent.putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 15000L);
-    }
-
-    private void createAndStartRecognizer() {
-        if (!shouldRestart) return;
-
-        // 매번 새 인스턴스 생성 → RECOGNIZER_BUSY(8) 방지
-        if (speechRecognizer != null) {
-            try { speechRecognizer.destroy(); } catch (Exception ignored) {}
-            speechRecognizer = null;
-        }
-
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
-        speechRecognizer.setRecognitionListener(new RecognitionListener() {
-
-            @Override
-            public void onReadyForSpeech(Bundle p) {
-                isListening = true;
-                setStatus("🎤 듣는 중... (재시작: " + restartCount + ")");
-            }
-
-            @Override
-            public void onBeginningOfSpeech() {
-                setStatus("🔊 소리 감지됨");
-            }
-
-            @Override
-            public void onPartialResults(Bundle partialResults) {
-                ArrayList<String> partial = partialResults
-                    .getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                if (partial != null && !partial.isEmpty()) {
-                    translateAndShow(partial.get(0));
-                }
-            }
-
-            @Override
-            public void onResults(Bundle results) {
-                ArrayList<String> matches = results
-                    .getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                if (matches != null && !matches.isEmpty()) {
-                    translateAndShow(matches.get(0));
-                }
-                restartCount++;
-                mainHandler.postDelayed(() -> createAndStartRecognizer(), 200);
-            }
-
-            @Override
-            public void onError(int error) {
-                isListening = false;
-                String msg = sttErrorMsg(error);
-                Log.w(TAG, "STT 오류: " + msg);
-
-                switch (error) {
-                    case SpeechRecognizer.ERROR_NO_MATCH:        // 소리 없음 → 바로 재시작
-                    case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:  // 침묵 타임아웃 → 바로 재시작
-                        restartCount++;
-                        setStatus("🔇 소리없음(재시작)[" + restartCount + "회]");
-                        mainHandler.postDelayed(() -> createAndStartRecognizer(), 200);
-                        break;
-                    case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: // 인식기 바쁨 → 1.5초 후
-                        mainHandler.postDelayed(() -> createAndStartRecognizer(), 1500);
-                        break;
-                    default:
-                        setStatus("⚠️ " + msg);
-                        mainHandler.postDelayed(() -> createAndStartRecognizer(), 1000);
-                        break;
-                }
-            }
-
-            @Override public void onRmsChanged(float r) {}
-            @Override public void onBufferReceived(byte[] b) {}
-            @Override public void onEndOfSpeech() { isListening = false; }
-            @Override public void onEvent(int t, Bundle p) {}
-        });
-
-        speechRecognizer.startListening(recognizerIntent);
-        isListening = true;
-    }
-
-    // ── MLKit 번역 ────────────────────────────────────────────────────────────
-
-    private void translateAndShow(String en) {
-        // 영어 먼저 즉시 표시
-        showSubtitles(en, null);
-        if (!translatorReady || "en".equals(langMode)) return;
-        enKoTranslator.translate(en)
-            .addOnSuccessListener(ko -> showSubtitles(en, ko))
-            .addOnFailureListener(e -> Log.e(TAG, "번역 실패: " + e.getMessage()));
-    }
-
-    private void setupTranslator() {
-        TranslatorOptions options = new TranslatorOptions.Builder()
-            .setSourceLanguage(TranslateLanguage.ENGLISH)
-            .setTargetLanguage(TranslateLanguage.KOREAN)
-            .build();
-        enKoTranslator = Translation.getClient(options);
-        enKoTranslator.downloadModelIfNeeded()
-            .addOnSuccessListener(v -> { translatorReady = true; Log.d(TAG, "번역 모델 OK"); })
-            .addOnFailureListener(e -> Log.e(TAG, "번역 모델 실패: " + e.getMessage()));
     }
 
     // ── 알림 ─────────────────────────────────────────────────────────────────
@@ -340,28 +384,10 @@ public class SubtitleOverlayService extends Service {
             new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("SubOverlay 실행 중")
-            .setContentText("실시간 자막 오버레이 활성화됨")
+            .setContentText("Vosk 오프라인 자막 활성화됨")
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentIntent(pi)
             .setOngoing(true)
             .build();
-    }
-
-    // ── 유틸 ─────────────────────────────────────────────────────────────────
-
-    private static String sttErrorMsg(int code) {
-        switch (code) {
-            case SpeechRecognizer.ERROR_AUDIO:                    return "오디오 녹음 실패";
-            case SpeechRecognizer.ERROR_CLIENT:                   return "클라이언트 오류";
-            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: return "마이크 권한 없음!";
-            case SpeechRecognizer.ERROR_NETWORK:                  return "네트워크 없음";
-            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT:          return "네트워크 타임아웃";
-            case SpeechRecognizer.ERROR_NO_MATCH:                 return "소리없음(재시작)";
-            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:          return "인식기 바쁨(재시작)";
-            case SpeechRecognizer.ERROR_SERVER:                   return "서버 오류";
-            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:           return "침묵 감지(재시작)";
-            case SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED:   return "영어 STT 미지원";
-            default:                                               return "오류 코드: " + code;
-        }
     }
 }

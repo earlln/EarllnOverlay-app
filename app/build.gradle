@@ -42,6 +42,6 @@ dependencies {
     // Google MLKit 번역 (온디바이스)
     implementation 'com.google.mlkit:translate:17.0.2'
 
-    // OkHttp (필요시 API 호출용)
-    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // Vosk 오프라인 STT (SpeechRecognizer 대체 → 오디오 포커스 충돌 없음)
+    implementation 'com.alphacephei:vosk-android:0.3.47'
 }
