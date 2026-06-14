@@ -88,6 +88,7 @@ public class SubtitleOverlayService extends Service {
     private int fontSize = 18;
     private int bgAlpha = 180;
     private String langMode = "both";
+    private String audioSource = "internal"; // "internal" or "mic"
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Runnable hideRunnable = this::hideSubtitles;
@@ -99,6 +100,12 @@ public class SubtitleOverlayService extends Service {
             bgAlpha  = intent.getIntExtra("bgAlpha", 180);
             langMode = intent.getStringExtra("langMode");
             if (langMode == null) langMode = "both";
+            String newAudioSource = intent.getStringExtra("audioSource");
+            if (newAudioSource != null && !newAudioSource.equals(audioSource)) {
+                audioSource = newAudioSource;
+                // 오디오 소스 변경 시 캡처 재시작
+                restartAudioCapture();
+            }
             applySettings();
         }
     };
@@ -126,15 +133,23 @@ public class SubtitleOverlayService extends Service {
         bgAlpha  = intent.getIntExtra("bgAlpha", 180);
         langMode = intent.getStringExtra("langMode");
         if (langMode == null) langMode = "both";
+        audioSource = intent.getStringExtra("audioSource");
+        if (audioSource == null) audioSource = "internal";
 
         // MediaProjection 토큰 받기 (내부 오디오 캡처용, API 29+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             int resultCode = intent.getIntExtra("resultCode", -1);
-            Intent data = intent.getParcelableExtra("data");
+            // Android 13(API 33)부터 타입 명시 필요
+            Intent data = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                ? intent.getParcelableExtra("data", Intent.class)
+                : intent.getParcelableExtra("data");
             if (resultCode != -1 && data != null) {
                 MediaProjectionManager mpm =
                     (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
                 mediaProjection = mpm.getMediaProjection(resultCode, data);
+                Log.d(TAG, "MediaProjection 획득 성공");
+            } else {
+                Log.w(TAG, "MediaProjection 데이터 없음: resultCode=" + resultCode + ", data=" + data);
             }
         }
 
@@ -260,21 +275,24 @@ public class SubtitleOverlayService extends Service {
         int bufferSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) * 4;
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && mediaProjection != null) {
-            // ✅ 내부 오디오 캡처: 영상 오디오를 직접 받음 → 마이크 X, 오디오 포커스 충돌 X
+        if ("mic".equals(audioSource)) {
+            // 사용자가 마이크 선택
+            setStatus("🎤 마이크 캡처 중\n주변 소리를 인식합니다");
+            audioRecord = buildMicAudioRecord(bufferSize);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && mediaProjection != null) {
+            // 내부 오디오 캡처 시도
             audioRecord = buildInternalAudioRecord(bufferSize);
             if (audioRecord == null || audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
-                setStatus("⚠️ 내부오디오 불가(앱이 차단)\n🎤 마이크로 전환 - 볼륨 높여주세요");
+                setStatus("⚠️ 내부오디오 불가 (앱이 차단함)\n🎤 마이크로 자동 전환");
                 audioRecord = buildMicAudioRecord(bufferSize);
             } else {
-                setStatus("🎬 내부 오디오 캡처 중\n영상 소리를 직접 인식합니다");
+                setStatus("📱 내부 오디오 캡처 중\n볼륨 0이어도 인식 가능");
             }
         } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            setStatus("🎤 마이크 캡처 중 (Android 10 미만)\n볼륨을 높여주세요");
+            setStatus("🎤 마이크 캡처 중\n(Android 10 미만 - 내부오디오 미지원)");
             audioRecord = buildMicAudioRecord(bufferSize);
         } else {
-            // mediaProjection == null: 화면 캡처 권한 없음
-            setStatus("🎤 마이크 캡처 중\n(화면 캡처 권한 없음 - 앱 재시작 권장)");
+            setStatus("⚠️ 화면 캡처 권한 없음\n앱을 재시작하고 권한을 허용해주세요");
             audioRecord = buildMicAudioRecord(bufferSize);
         }
 
@@ -289,6 +307,26 @@ public class SubtitleOverlayService extends Service {
         recordingThread = new Thread(this::captureLoop, "VoskCaptureThread");
         recordingThread.setDaemon(true);
         recordingThread.start();
+    }
+
+    private void restartAudioCapture() {
+        captureRunning = false;
+        if (audioRecord != null) {
+            try { audioRecord.stop(); }    catch (Exception ignored) {}
+            try { audioRecord.release(); } catch (Exception ignored) {}
+            audioRecord = null;
+        }
+        if (recordingThread != null) {
+            recordingThread.interrupt();
+            recordingThread = null;
+        }
+        if (voskRecognizer != null) {
+            voskRecognizer.close();
+            try { voskRecognizer = new Recognizer(voskModel, SAMPLE_RATE); }
+            catch (Exception e) { setStatus("❌ Recognizer 재생성 실패"); return; }
+        }
+        lastPartial = "";
+        startAudioCapture();
     }
 
     @RequiresApi(api = Build.VERSION_CODES.Q)

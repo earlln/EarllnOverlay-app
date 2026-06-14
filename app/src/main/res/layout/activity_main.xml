@@ -110,6 +110,57 @@
                 app:strokeWidth="1.5dp"/>
         </com.google.android.material.button.MaterialButtonToggleGroup>
 
+        <!-- 오디오 소스 선택 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="오디오 소스"
+            android:textColor="#AAAACC"
+            android:textSize="12sp"
+            android:layout_marginBottom="8dp"/>
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/toggleAudioSource"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:singleSelection="true"
+            app:selectionRequired="true"
+            android:layout_marginBottom="8dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnAudioInternal"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📱 내부 오디오"
+                android:textColor="@color/btn_lang_text"
+                app:backgroundTint="@color/btn_lang_bg"
+                app:strokeColor="#7C6AFF"
+                app:strokeWidth="1.5dp"
+                android:checked="true"/>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnAudioMic"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🎤 마이크"
+                android:textColor="@color/btn_lang_text"
+                app:backgroundTint="@color/btn_lang_bg"
+                app:strokeColor="#7C6AFF"
+                app:strokeWidth="1.5dp"/>
+
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <TextView
+            android:id="@+id/tvAudioSourceDesc"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="폰 내부 소리만 인식 (볼륨 0도 가능)"
+            android:textColor="#5555AA"
+            android:textSize="11sp"
+            android:layout_marginBottom="20dp"/>
+
         <!-- 글자 크기 -->
         <TextView
             android:id="@+id/tvFontSizeLabel"

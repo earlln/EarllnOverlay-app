@@ -92,6 +92,17 @@ public class MainActivity extends AppCompatActivity {
             sendSettingsBroadcast();
         });
 
+        // 오디오 소스 토글
+        binding.toggleAudioSource.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            if (isChecked) {
+                boolean isInternal = checkedId == R.id.btnAudioInternal;
+                binding.tvAudioSourceDesc.setText(isInternal
+                    ? "폰 내부 소리만 인식 (볼륨 0도 가능)"
+                    : "마이크로 주변 소리 인식");
+                sendSettingsBroadcast();
+            }
+        });
+
         updateButtonState();
     }
 
@@ -123,6 +134,7 @@ public class MainActivity extends AppCompatActivity {
         serviceIntent.putExtra("fontSize", (int) binding.sliderFontSize.getValue());
         serviceIntent.putExtra("bgAlpha", (int) binding.sliderBgAlpha.getValue());
         serviceIntent.putExtra("langMode", getSelectedLang());
+        serviceIntent.putExtra("audioSource", getSelectedAudioSource());
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent);
@@ -145,6 +157,7 @@ public class MainActivity extends AppCompatActivity {
         intent.putExtra("fontSize", (int) binding.sliderFontSize.getValue());
         intent.putExtra("bgAlpha", (int) binding.sliderBgAlpha.getValue());
         intent.putExtra("langMode", getSelectedLang());
+        intent.putExtra("audioSource", getSelectedAudioSource());
         sendBroadcast(intent);
     }
 
@@ -152,7 +165,12 @@ public class MainActivity extends AppCompatActivity {
         int id = binding.toggleLang.getCheckedButtonId();
         if (id == R.id.btnLangKo) return "ko";
         if (id == R.id.btnLangEn) return "en";
-        return "both"; // 기본: 한+영
+        return "both";
+    }
+
+    private String getSelectedAudioSource() {
+        return binding.toggleAudioSource.getCheckedButtonId() == R.id.btnAudioMic
+            ? "mic" : "internal";
     }
 
     private void updateButtonState() {
