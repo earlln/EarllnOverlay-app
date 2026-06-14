@@ -149,7 +149,8 @@ public class MainActivity extends AppCompatActivity {
     private void stopSubtitleService() {
         Intent serviceIntent = new Intent(this, SubtitleOverlayService.class);
         stopService(serviceIntent);
-        updateButtonState();
+        // onDestroy가 비동기로 실행되므로 잠시 후 상태 갱신
+        binding.btnToggleService.postDelayed(this::updateButtonState, 500);
     }
 
     private void sendSettingsBroadcast() {

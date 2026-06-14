@@ -144,12 +144,17 @@ public class SubtitleOverlayService extends Service {
                 ? intent.getParcelableExtra("data", Intent.class)
                 : intent.getParcelableExtra("data");
             if (resultCode != -1 && data != null) {
-                MediaProjectionManager mpm =
-                    (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
-                mediaProjection = mpm.getMediaProjection(resultCode, data);
-                Log.d(TAG, "MediaProjection 획득 성공");
+                try {
+                    MediaProjectionManager mpm =
+                        (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+                    mediaProjection = mpm.getMediaProjection(resultCode, data);
+                    Log.d(TAG, "MediaProjection 획득 성공");
+                } catch (Exception e) {
+                    Log.e(TAG, "MediaProjection 획득 실패: " + e.getMessage());
+                    mediaProjection = null;
+                }
             } else {
-                Log.w(TAG, "MediaProjection 데이터 없음: resultCode=" + resultCode + ", data=" + data);
+                Log.w(TAG, "MediaProjection 데이터 없음: resultCode=" + resultCode);
             }
         }
 
@@ -169,6 +174,7 @@ public class SubtitleOverlayService extends Service {
         captureRunning = false;
         mainHandler.removeCallbacksAndMessages(null);
 
+        // AudioRecord.stop() 먼저 → read() 블로킹 해제 → 스레드 자연 종료
         if (audioRecord != null) {
             try { audioRecord.stop(); }    catch (Exception ignored) {}
             try { audioRecord.release(); } catch (Exception ignored) {}
@@ -176,6 +182,7 @@ public class SubtitleOverlayService extends Service {
         }
         if (recordingThread != null) {
             recordingThread.interrupt();
+            try { recordingThread.join(1000); } catch (InterruptedException ignored) {}
             recordingThread = null;
         }
         if (voskRecognizer != null) { voskRecognizer.close(); voskRecognizer = null; }
@@ -375,15 +382,18 @@ public class SubtitleOverlayService extends Service {
     private void captureLoop() {
         byte[] buffer = new byte[4096];
         while (captureRunning && !Thread.currentThread().isInterrupted()) {
+            if (audioRecord == null) break;
             int bytesRead = audioRecord.read(buffer, 0, buffer.length);
-            if (bytesRead <= 0 || voskRecognizer == null) continue;
+            if (bytesRead < 0) break; // AudioRecord 중지됨 → 루프 탈출
+            if (bytesRead == 0 || voskRecognizer == null) continue;
 
             if (voskRecognizer.acceptWaveForm(buffer, bytesRead)) {
-                parseAndShow(voskRecognizer.getResult(), false);   // 최종 결과
+                parseAndShow(voskRecognizer.getResult(), false);
             } else {
-                parseAndShow(voskRecognizer.getPartialResult(), true); // 실시간 중간 결과
+                parseAndShow(voskRecognizer.getPartialResult(), true);
             }
         }
+        Log.d(TAG, "captureLoop 종료");
     }
 
     /** Vosk JSON 파싱: {"text":"..."} 또는 {"partial":"..."} */
