@@ -263,15 +263,18 @@ public class SubtitleOverlayService extends Service {
             // ✅ 내부 오디오 캡처: 영상 오디오를 직접 받음 → 마이크 X, 오디오 포커스 충돌 X
             audioRecord = buildInternalAudioRecord(bufferSize);
             if (audioRecord == null || audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
-                setStatus("⚠️ 내부 오디오 불가 → 마이크로 대체");
+                setStatus("⚠️ 내부오디오 불가(앱이 차단)\n🎤 마이크로 전환 - 볼륨 높여주세요");
                 audioRecord = buildMicAudioRecord(bufferSize);
             } else {
-                setStatus("🎬 내부 오디오 캡처 중 (영상 방해 없음)");
+                setStatus("🎬 내부 오디오 캡처 중\n영상 소리를 직접 인식합니다");
             }
-        } else {
-            // 폴백: 마이크 사용 (SpeechRecognizer보다 오디오 포커스 충돌 없음)
+        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            setStatus("🎤 마이크 캡처 중 (Android 10 미만)\n볼륨을 높여주세요");
             audioRecord = buildMicAudioRecord(bufferSize);
-            setStatus("🎤 마이크 캡처 중");
+        } else {
+            // mediaProjection == null: 화면 캡처 권한 없음
+            setStatus("🎤 마이크 캡처 중\n(화면 캡처 권한 없음 - 앱 재시작 권장)");
+            audioRecord = buildMicAudioRecord(bufferSize);
         }
 
         if (audioRecord == null || audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
@@ -350,6 +353,8 @@ public class SubtitleOverlayService extends Service {
             JSONObject obj = new JSONObject(json);
             String text = isPartial ? obj.optString("partial") : obj.optString("text");
             if (text != null && !text.trim().isEmpty()) {
+                // 인식된 텍스트를 상태창에도 표시 (Vosk 작동 확인용)
+                setStatus((isPartial ? "💬 " : "✅ ") + text.trim());
                 translateAndShow(text.trim());
             }
         } catch (Exception e) {
