@@ -81,8 +81,10 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="한 + EN"
-                android:textColor="#FFFFFF"
+                android:textColor="@color/btn_lang_text"
+                app:backgroundTint="@color/btn_lang_bg"
                 app:strokeColor="#7C6AFF"
+                app:strokeWidth="1.5dp"
                 android:checked="true"/>
 
             <com.google.android.material.button.MaterialButton
@@ -91,8 +93,10 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="한국어"
-                android:textColor="#FFFFFF"
-                app:strokeColor="#7C6AFF"/>
+                android:textColor="@color/btn_lang_text"
+                app:backgroundTint="@color/btn_lang_bg"
+                app:strokeColor="#7C6AFF"
+                app:strokeWidth="1.5dp"/>
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnLangEn"
@@ -100,8 +104,10 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="English"
-                android:textColor="#FFFFFF"
-                app:strokeColor="#7C6AFF"/>
+                android:textColor="@color/btn_lang_text"
+                app:backgroundTint="@color/btn_lang_bg"
+                app:strokeColor="#7C6AFF"
+                app:strokeWidth="1.5dp"/>
         </com.google.android.material.button.MaterialButtonToggleGroup>
 
         <!-- 글자 크기 -->

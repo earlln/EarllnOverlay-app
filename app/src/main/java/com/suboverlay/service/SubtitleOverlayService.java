@@ -41,9 +41,16 @@ import com.suboverlay.ui.MainActivity;
 import org.json.JSONObject;
 import org.vosk.Model;
 import org.vosk.Recognizer;
-import org.vosk.android.StorageService;
 
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class SubtitleOverlayService extends Service {
 
@@ -131,23 +138,10 @@ public class SubtitleOverlayService extends Service {
         }
 
         createOverlay();
-        setStatus("🔄 Vosk 모델 로딩 중...\n(첫 실행 시 약 40MB 다운로드)");
+        setStatus("🔄 Vosk 모델 준비 중...");
 
-        // Vosk 모델 비동기 로드 (자동 다운로드 포함)
-        StorageService.unpack(this, "model-en-us", "model",
-            model -> {
-                voskModel = model;
-                try {
-                    voskRecognizer = new Recognizer(model, SAMPLE_RATE);
-                } catch (IOException e) {
-                    setStatus("❌ Recognizer 생성 실패: " + e.getMessage());
-                    return;
-                }
-                setStatus("✅ 준비 완료! 영상을 재생하세요.");
-                startAudioCapture();
-            },
-            e -> setStatus("❌ 모델 로드 실패: " + e.getMessage())
-        );
+        // 백그라운드 스레드에서 모델 다운로드 후 초기화
+        new Thread(this::loadVoskModel, "VoskModelLoader").start();
 
         return START_STICKY;
     }
@@ -179,6 +173,85 @@ public class SubtitleOverlayService extends Service {
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }
+
+    // ── Vosk 모델 로드 ───────────────────────────────────────────────────────
+
+    private static final String MODEL_URL =
+        "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip";
+    private static final String MODEL_DIR_NAME = "vosk-model-small-en-us-0.15";
+
+    private void loadVoskModel() {
+        File modelDir = new File(getFilesDir(), MODEL_DIR_NAME);
+
+        if (!modelDir.exists()) {
+            setStatus("📥 모델 다운로드 중... (약 40MB)\n잠시 기다려 주세요");
+            try {
+                File zipFile = new File(getFilesDir(), "vosk-model.zip");
+                downloadFile(MODEL_URL, zipFile);
+                setStatus("📦 압축 해제 중...");
+                unzip(zipFile, getFilesDir());
+                zipFile.delete();
+            } catch (IOException e) {
+                setStatus("❌ 다운로드 실패: " + e.getMessage());
+                return;
+            }
+        }
+
+        try {
+            setStatus("⚙️ 모델 로딩 중...");
+            voskModel = new Model(modelDir.getAbsolutePath());
+            voskRecognizer = new Recognizer(voskModel, SAMPLE_RATE);
+            setStatus("✅ 준비 완료! 영상을 재생하세요.");
+            startAudioCapture();
+        } catch (Exception e) {
+            setStatus("❌ 모델 로드 실패: " + e.getMessage());
+        }
+    }
+
+    private void downloadFile(String urlStr, File dest) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(60000);
+        conn.connect();
+
+        int total = conn.getContentLength();
+        try (InputStream in = new BufferedInputStream(conn.getInputStream());
+             FileOutputStream out = new FileOutputStream(dest)) {
+            byte[] buf = new byte[8192];
+            int read, downloaded = 0;
+            while ((read = in.read(buf)) != -1) {
+                out.write(buf, 0, read);
+                downloaded += read;
+                if (total > 0) {
+                    int pct = (int) (downloaded * 100L / total);
+                    setStatus("📥 다운로드 중... " + pct + "%");
+                }
+            }
+        } finally {
+            conn.disconnect();
+        }
+    }
+
+    private void unzip(File zipFile, File destDir) throws IOException {
+        try (ZipInputStream zis = new ZipInputStream(
+                new BufferedInputStream(new java.io.FileInputStream(zipFile)))) {
+            ZipEntry entry;
+            byte[] buf = new byte[8192];
+            while ((entry = zis.getNextEntry()) != null) {
+                File outFile = new File(destDir, entry.getName());
+                if (entry.isDirectory()) {
+                    outFile.mkdirs();
+                } else {
+                    outFile.getParentFile().mkdirs();
+                    try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                        int len;
+                        while ((len = zis.read(buf)) != -1) fos.write(buf, 0, len);
+                    }
+                }
+                zis.closeEntry();
+            }
+        }
+    }
 
     // ── 오디오 캡처 ──────────────────────────────────────────────────────────
 
