@@ -14,6 +14,7 @@ import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
+import android.media.AudioManager;
 import android.media.AudioPlaybackCaptureConfiguration;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
@@ -68,8 +69,10 @@ public class SubtitleOverlayService extends Service {
     private static final long MAX_SEGMENT_MS = 12_000;
     private static final int MAX_SEGMENT_WORDS = 35;
 
-    /** 내부 오디오가 이 시간 이상 완전 무음이면 안내 */
-    private static final long SILENCE_HINT_MS = 20_000;
+    /** 영상이 재생 중인데 내부 오디오가 이 시간 동안 완전 무음이면 캡처가 막힌 것으로 판단 → 마이크 전환 */
+    private static final long BLOCKED_DETECT_MS = 4_000;
+    /** 이 값 이상의 진폭이 있으면 '소리 있음' (16bit 기준, 약 -40dBFS) */
+    private static final int SOUND_PEAK_THRESHOLD = 300;
 
     /** 오디오 장치 오류 시 자동 복구 제한 */
     private static final int MAX_AUTO_RESTARTS = 5;
@@ -87,6 +90,7 @@ public class SubtitleOverlayService extends Service {
     private volatile String langMode = "both";
     private volatile String audioSource = "internal";
     private volatile String sttModelKey = "small";
+    private volatile boolean bottomSubtitle = true;
 
     // ── 생명주기 / 스레드 ──
     private volatile boolean destroyed = false;
@@ -107,6 +111,9 @@ public class SubtitleOverlayService extends Service {
 
     // ── MediaProjection ──
     private volatile MediaProjection mediaProjection;
+    /** 재생 앱이 내부 오디오 캡처를 막은 것으로 판단됨 → 마이크 사용 (소스 변경/새 권한 시 초기화) */
+    private volatile boolean internalBlocked = false;
+    private AudioManager audioManager;
     private final MediaProjection.Callback projectionCallback = new MediaProjection.Callback() {
         @Override
         public void onStop() {
@@ -142,6 +149,7 @@ public class SubtitleOverlayService extends Service {
         super.onCreate();
         isRunning = true;
         notePanel = new NotePanelController(this, mainHandler);
+        audioManager = getSystemService(AudioManager.class);
         createNotificationChannel();
         registerReceiver(settingsReceiver,
             new IntentFilter(ACTION_UPDATE_SETTINGS), Context.RECEIVER_NOT_EXPORTED);
@@ -171,6 +179,7 @@ public class SubtitleOverlayService extends Service {
             if (newProjection != null) {
                 MediaProjection old = mediaProjection;
                 mediaProjection = newProjection;
+                internalBlocked = false;
                 if (old != null) {
                     try { old.unregisterCallback(projectionCallback); old.stop(); }
                     catch (Exception ignored) {}
@@ -300,6 +309,11 @@ public class SubtitleOverlayService extends Service {
         String newSource = intent.getStringExtra("audioSource");
         boolean sourceChanged = newSource != null && !newSource.equals(audioSource);
         if (newSource != null) audioSource = newSource;
+        if (sourceChanged) internalBlocked = false; // 사용자가 다시 고르면 내부 오디오 재시도
+
+        if (intent.hasExtra("bottomSubtitle")) {
+            bottomSubtitle = intent.getBooleanExtra("bottomSubtitle", true);
+        }
 
         String newModel = intent.getStringExtra("sttModel");
         boolean modelChanged = newModel != null && !newModel.equals(sttModelKey);
@@ -415,6 +429,9 @@ public class SubtitleOverlayService extends Service {
         } else if (mediaProjection == null) {
             ar = buildMicAudioRecord(bufferSize);
             statusMsg = "🎤 마이크 캡처 중\n(화면 공유 권한이 없어 내부 오디오 불가)";
+        } else if (internalBlocked) {
+            ar = buildMicAudioRecord(bufferSize);
+            statusMsg = "🎤 마이크 캡처 중 (재생 앱이 내부 오디오를 막음)\n볼륨을 켜 두세요";
         } else {
             ar = buildInternalAudioRecord(bufferSize);
             if (isUsable(ar)) {
@@ -550,8 +567,11 @@ public class SubtitleOverlayService extends Service {
         byte[] buffer = new byte[4096]; // 16kHz mono 16bit 기준 128ms
         String lastPartial = "";
         long segmentStart = 0;
-        long silentSince = System.currentTimeMillis();
-        boolean silenceHinted = false;
+        long zeroSince = System.currentTimeMillis();
+        long lastMusicCheck = 0;
+        long lastLevelReport = 0;
+        boolean soundInWindow = false;
+        boolean fallbackRequested = false;
         boolean deviceError = false;
 
         while (captureRunning && session == captureSession) {
@@ -568,14 +588,32 @@ public class SubtitleOverlayService extends Service {
             }
             if (n == 0) continue;
 
-            if (internal) {
-                long now = System.currentTimeMillis();
-                if (!isSilent(buffer, n)) {
-                    silentSince = now;
-                    silenceHinted = false;
-                } else if (!silenceHinted && now - silentSince > SILENCE_HINT_MS) {
-                    silenceHinted = true;
-                    setStatus("🔇 내부 오디오가 무음입니다\n재생 중인 앱이 캡처를 막았다면 🎤 마이크 모드를 사용하세요");
+            long now = System.currentTimeMillis();
+            int peak = peakAmplitude(buffer, n);
+
+            // 패널 상태 줄에 '소리 감지됨/없음' 표시 (약 1초마다)
+            soundInWindow |= peak >= SOUND_PEAK_THRESHOLD;
+            if (now - lastLevelReport >= 1000) {
+                lastLevelReport = now;
+                final boolean snd = soundInWindow;
+                soundInWindow = false;
+                mainHandler.post(() -> { if (!destroyed) notePanel.setAudioLevel(snd); });
+            }
+
+            // 내부 오디오가 '완전한 0'(디지털 무음)인데 시스템상 미디어가 재생 중이면 → 캡처 차단으로 판단
+            if (internal && !fallbackRequested) {
+                if (peak > 0) {
+                    zeroSince = now;
+                } else if (now - zeroSince >= BLOCKED_DETECT_MS && now - lastMusicCheck >= 500) {
+                    lastMusicCheck = now;
+                    if (audioManager != null && audioManager.isMusicActive()) {
+                        fallbackRequested = true;
+                        internalBlocked = true;
+                        Log.w(TAG, "내부 오디오 캡처 차단 감지 → 마이크로 전환");
+                        setStatus("⚠️ 재생 중인 앱이 내부 오디오 캡처를 막고 있어\n🎤 마이크로 자동 전환합니다");
+                        final int s = session;
+                        runOnControl(() -> restartCapture(s));
+                    }
                 }
             }
 
@@ -625,9 +663,14 @@ public class SubtitleOverlayService extends Service {
         if (deviceError && !destroyed) scheduleAutoRestart(session);
     }
 
-    private static boolean isSilent(byte[] buf, int n) {
-        for (int i = 0; i < n; i++) if (buf[i] != 0) return false;
-        return true;
+    /** 16bit little-endian PCM 의 최대 진폭 */
+    private static int peakAmplitude(byte[] buf, int n) {
+        int peak = 0;
+        for (int i = 0; i + 1 < n; i += 2) {
+            int v = Math.abs((short) ((buf[i] & 0xff) | (buf[i + 1] << 8)));
+            if (v > peak) peak = v;
+        }
+        return peak;
     }
 
     private static String extract(String json, String key) {
@@ -699,7 +742,7 @@ public class SubtitleOverlayService extends Service {
 
     private void applySettings() {
         mainHandler.post(() -> {
-            if (!destroyed) notePanel.applySettings(fontSize, bgAlpha, langMode);
+            if (!destroyed) notePanel.applySettings(fontSize, bgAlpha, langMode, bottomSubtitle);
         });
     }
 

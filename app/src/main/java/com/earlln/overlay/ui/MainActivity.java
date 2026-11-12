@@ -117,6 +117,9 @@ public class MainActivity extends AppCompatActivity {
         });
         updateSttModelDesc();
 
+        // 하단 자막 스위치
+        binding.switchBottomSubtitle.setOnCheckedChangeListener((b, checked) -> sendSettingsBroadcast());
+
         updateButtonState();
     }
 
@@ -142,6 +145,8 @@ public class MainActivity extends AppCompatActivity {
 
         boolean large = "large".equals(prefs.getString("sttModel", "small"));
         binding.toggleSttModel.check(large ? R.id.btnModelLarge : R.id.btnModelSmall);
+
+        binding.switchBottomSubtitle.setChecked(prefs.getBoolean("bottomSubtitle", true));
     }
 
     private static int clamp(int v, int min, int max) {
@@ -155,6 +160,7 @@ public class MainActivity extends AppCompatActivity {
             .putString("langMode", getSelectedLang())
             .putString("audioSource", getSelectedAudioSource())
             .putString("sttModel", getSelectedSttModel())
+            .putBoolean("bottomSubtitle", binding.switchBottomSubtitle.isChecked())
             .apply();
     }
 
@@ -226,6 +232,7 @@ public class MainActivity extends AppCompatActivity {
         intent.putExtra("langMode", getSelectedLang());
         intent.putExtra("audioSource", getSelectedAudioSource());
         intent.putExtra("sttModel", getSelectedSttModel());
+        intent.putExtra("bottomSubtitle", binding.switchBottomSubtitle.isChecked());
     }
 
     private String getSelectedSttModel() {

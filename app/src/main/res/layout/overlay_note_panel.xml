@@ -40,6 +40,22 @@
             android:contentDescription="닫기"/>
     </LinearLayout>
 
+    <!-- 캡처 상태 + 소리 입력 여부 (원인 파악용, 항상 표시) -->
+    <TextView
+        android:id="@+id/tvPanelStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="3dp"
+        android:paddingBottom="3dp"
+        android:background="#1A000000"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:text="🔄 준비 중..."
+        android:textColor="#FFD700"
+        android:textSize="11sp"/>
+
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"

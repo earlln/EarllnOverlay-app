@@ -36,12 +36,14 @@ import java.util.List;
  *  - 플로팅 버튼 : 화면 위에 항상 떠 있음. 탭 → 패널 열기/닫기, 드래그 → 이동. 아래에 상태 안내 라벨
  *  - 패널        : 우측 반투명 창. 확정 문장 + 번역이 차곡차곡 쌓임. 이동/확장/숨기기/닫기/복사/공유
  *  - 탭          : 패널을 숨겼을 때 화면 오른쪽 가장자리에 남는 작은 탭 (새 문장 수 표시)
+ *  - 하단 자막   : (설정 시) 화면 아래 실시간 자막. 패널이 열려 있으면 자동 숨김, 터치는 아래 앱으로 통과
  */
 public final class NotePanelController {
 
     private static final String TAG = "EarllnOverlay";
     private static final int MAX_ENTRIES = 500;
     private static final long STATUS_HIDE_MS = 6000;
+    private static final long BAR_HIDE_MS = 5000;
 
     private enum PanelState { CLOSED, OPEN, HIDDEN }
 
@@ -60,11 +62,22 @@ public final class NotePanelController {
 
     // 패널
     private View panelRoot;
-    private TextView tvTitle, tvEmpty, tvLiveEn, tvLiveKo, btnExpand;
+    private TextView tvTitle, tvEmpty, tvLiveEn, tvLiveKo, btnExpand, tvPanelStatus;
     private View liveContainer;
     private RecyclerView rv;
     private WindowManager.LayoutParams panelLp;
     private boolean panelPositioned = false;
+
+    // 패널 상태 줄 (마지막 상태 안내 + 소리 입력 여부)
+    private String lastStatus = "🔄 준비 중...";
+    private Boolean hasSound = null;
+
+    // 하단 자막
+    private View barView;
+    private TextView tvBarKo, tvBarEn;
+    private WindowManager.LayoutParams barLp;
+    private boolean bottomEnabled = true;
+    private final Runnable barHideRunnable = this::clearBar;
 
     // 숨김 탭
     private TextView tabView;
@@ -112,6 +125,7 @@ public final class NotePanelController {
 
             btn.setOnTouchListener(new DragListener(buttonRoot, buttonLp, this::togglePanel, false));
             wm.addView(buttonRoot, buttonLp);
+            ensureBar();
             return true;
         } catch (Exception e) {
             Log.e(TAG, "플로팅 버튼 생성 실패", e);
@@ -122,6 +136,9 @@ public final class NotePanelController {
 
     /** 상태 안내 (버튼 아래 작은 라벨). 오류(❌)가 아니면 잠시 후 자동으로 숨김 */
     public void setStatus(String msg) {
+        int nl = msg.indexOf('\n');
+        lastStatus = nl > 0 ? msg.substring(0, nl) : msg;
+        updatePanelStatus();
         if (tvStatus == null) return;
         tvStatus.setText(msg);
         tvStatus.setVisibility(View.VISIBLE);
@@ -129,7 +146,14 @@ public final class NotePanelController {
         if (!msg.startsWith("❌")) handler.postDelayed(hideStatusRunnable, STATUS_HIDE_MS);
     }
 
-    public void applySettings(int fontSize, int bgAlpha, String langMode) {
+    /** 소리 입력 여부 (캡처 스레드에서 약 1초마다 전달) */
+    public void setAudioLevel(boolean sound) {
+        if (hasSound != null && hasSound == sound) return;
+        hasSound = sound;
+        updatePanelStatus();
+    }
+
+    public void applySettings(int fontSize, int bgAlpha, String langMode, boolean bottomSubtitle) {
         this.fontSize = fontSize;
         this.bgAlpha = Math.max(0, Math.min(255, bgAlpha));
         this.langMode = langMode == null ? "both" : langMode;
@@ -137,6 +161,15 @@ public final class NotePanelController {
         adapter.notifyDataSetChanged();
         stylePanel();
         refreshLive();
+
+        bottomEnabled = bottomSubtitle;
+        if (buttonRoot != null) {
+            if (bottomEnabled) ensureBar();
+            else removeBar();
+        }
+        styleBar();
+        if ("ko".equals(this.langMode) && tvBarEn != null) tvBarEn.setVisibility(View.GONE);
+        if ("en".equals(this.langMode) && tvBarKo != null) tvBarKo.setVisibility(View.GONE);
     }
 
     public List<NoteEntry> entries() {
@@ -160,6 +193,7 @@ public final class NotePanelController {
             unseen++;
             updateTab();
         }
+        showBarEn(en);
         return e;
     }
 
@@ -169,6 +203,7 @@ public final class NotePanelController {
         if (idx < 0) return;
         boolean atBottom = isAtBottom();
         adapter.notifyItemChanged(idx);
+        if (idx == entries.size() - 1 && e.ko != null) showBarKo(e.ko);
         if (state == PanelState.OPEN && atBottom && idx == entries.size() - 1) scrollToBottom();
     }
 
@@ -176,6 +211,7 @@ public final class NotePanelController {
     public void setLive(String en) {
         liveEn = en;
         refreshLive();
+        showBarEn(en);
     }
 
     /** 진행 중 문장의 번역 갱신 */
@@ -183,6 +219,7 @@ public final class NotePanelController {
         if (liveEn == null || liveEn.isEmpty()) return;
         liveKo = ko;
         refreshLive();
+        showBarKo(ko);
     }
 
     public void clearLive() {
@@ -210,6 +247,8 @@ public final class NotePanelController {
 
     public void destroy() {
         handler.removeCallbacks(hideStatusRunnable);
+        handler.removeCallbacks(barHideRunnable);
+        removeBar();
         safeRemove(panelRoot);
         safeRemove(tabView);
         safeRemove(buttonRoot);
@@ -249,6 +288,7 @@ public final class NotePanelController {
             return;
         }
         state = PanelState.OPEN;
+        updateBarVisibility();
         unseen = 0;
         refreshLive();
         updateCounts();
@@ -260,6 +300,7 @@ public final class NotePanelController {
         if (state == PanelState.OPEN) safeRemove(panelRoot);
         if (state == PanelState.HIDDEN) safeRemove(tabView);
         state = PanelState.CLOSED;
+        updateBarVisibility();
     }
 
     /** — : 화면 오른쪽 가장자리의 작은 탭으로 접기 */
@@ -283,6 +324,7 @@ public final class NotePanelController {
             Log.e(TAG, "탭 표시 실패", e);
             state = PanelState.CLOSED;
         }
+        updateBarVisibility();
     }
 
     private void toggleExpand() {
@@ -337,6 +379,7 @@ public final class NotePanelController {
         tvLiveKo = panelRoot.findViewById(R.id.tvLiveKo);
         liveContainer = panelRoot.findViewById(R.id.liveContainer);
         btnExpand = panelRoot.findViewById(R.id.btnExpand);
+        tvPanelStatus = panelRoot.findViewById(R.id.tvPanelStatus);
         rv = panelRoot.findViewById(R.id.rvNotes);
 
         LinearLayoutManager lm = new LinearLayoutManager(ctx);
@@ -356,7 +399,83 @@ public final class NotePanelController {
 
         stylePanel();
         updateCounts();
+        updatePanelStatus();
         return true;
+    }
+
+    // ── 하단 자막 ────────────────────────────────────────────────────────────
+
+    private void ensureBar() {
+        if (!bottomEnabled || barView != null) return;
+        try {
+            barView = LayoutInflater.from(ctx).inflate(R.layout.overlay_subtitle_bar, null);
+            tvBarKo = barView.findViewById(R.id.tvBarKo);
+            tvBarEn = barView.findViewById(R.id.tvBarEn);
+            barLp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT);
+            barLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+            barLp.y = dp(40);
+            // Android 12+: 불투명도 0.8 이하인 창만 터치가 아래 앱으로 통과됨 (영상 조작 가능)
+            barLp.alpha = 0.8f;
+            styleBar();
+            wm.addView(barView, barLp);
+            updateBarVisibility();
+        } catch (Exception e) {
+            Log.e(TAG, "하단 자막 생성 실패", e);
+            barView = null;
+        }
+    }
+
+    private void removeBar() {
+        handler.removeCallbacks(barHideRunnable);
+        safeRemove(barView);
+        barView = null;
+        tvBarKo = null;
+        tvBarEn = null;
+    }
+
+    private void styleBar() {
+        if (barView == null) return;
+        tvBarKo.setTextSize(fontSize);
+        tvBarEn.setTextSize(Math.max(12, fontSize - 3));
+        tvBarKo.setBackgroundColor(Color.argb(bgAlpha, 0, 0, 0));
+        tvBarEn.setBackgroundColor(Color.argb(bgAlpha * 5 / 6, 0, 0, 0));
+    }
+
+    private void updateBarVisibility() {
+        if (barView == null) return;
+        barView.setVisibility(state == PanelState.OPEN ? View.GONE : View.VISIBLE);
+    }
+
+    private void showBarEn(String en) {
+        if (barView == null || "ko".equals(langMode)) return;
+        tvBarEn.setText(en);
+        tvBarEn.setVisibility(View.VISIBLE);
+        scheduleBarHide();
+    }
+
+    private void showBarKo(String ko) {
+        if (barView == null || "en".equals(langMode)) return;
+        tvBarKo.setText(ko);
+        tvBarKo.setVisibility(View.VISIBLE);
+        scheduleBarHide();
+    }
+
+    private void scheduleBarHide() {
+        handler.removeCallbacks(barHideRunnable);
+        handler.postDelayed(barHideRunnable, BAR_HIDE_MS);
+    }
+
+    private void clearBar() {
+        if (barView == null) return;
+        tvBarKo.setVisibility(View.GONE);
+        tvBarEn.setVisibility(View.GONE);
     }
 
     // ── 복사 / 공유 ──────────────────────────────────────────────────────────
@@ -435,6 +554,12 @@ public final class NotePanelController {
         boolean showKo = !"en".equals(langMode) && hasKo;
         tvLiveKo.setVisibility(showKo ? View.VISIBLE : View.GONE);
         if (showKo) tvLiveKo.setText(liveKo);
+    }
+
+    private void updatePanelStatus() {
+        if (tvPanelStatus == null) return;
+        String level = hasSound == null ? "" : (hasSound ? "🔊 소리 감지됨 · " : "🔇 소리 없음 · ");
+        tvPanelStatus.setText(level + lastStatus);
     }
 
     private void updateCounts() {
