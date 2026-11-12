@@ -15,7 +15,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="SubOverlay"
+            android:text="EarllnOverlay"
             android:textColor="#7C6AFF"
             android:textSize="28sp"
             android:textStyle="bold"

@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'com.suboverlay'
+    namespace 'com.earlln.overlay'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.suboverlay"
+        applicationId "com.earlln.overlay"
         minSdk 26
         targetSdk 34
         versionCode 1

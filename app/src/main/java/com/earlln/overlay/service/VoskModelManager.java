@@ -1,4 +1,4 @@
-package com.suboverlay.service;
+package com.earlln.overlay.service;
 
 import android.util.Log;
 
@@ -22,7 +22,7 @@ import java.util.zip.ZipInputStream;
  */
 public final class VoskModelManager {
 
-    private static final String TAG = "SubOverlay";
+    private static final String TAG = "EarllnOverlay";
     private static final int MAX_ATTEMPTS = 4;
 
     public enum ModelSpec {

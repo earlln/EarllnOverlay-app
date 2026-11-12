@@ -1,4 +1,4 @@
-package com.suboverlay.service;
+package com.earlln.overlay.service;
 
 import android.os.Handler;
 import android.util.Log;
@@ -44,7 +44,7 @@ public final class TranslationEngine {
     private static final int MAX_PENDING_FINALS = 100;
     private final ArrayDeque<PendingFinal> pendingFinals = new ArrayDeque<>();
 
-    private static final String TAG = "SubOverlay";
+    private static final String TAG = "EarllnOverlay";
 
     private static final long PARTIAL_DEBOUNCE_MS = 400;
     private static final long PARTIAL_MAX_WAIT_MS = 1200;

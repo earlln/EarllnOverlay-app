@@ -1,4 +1,4 @@
-package com.suboverlay.overlay;
+package com.earlln.overlay.note;
 
 import android.annotation.SuppressLint;
 import android.content.ClipData;
@@ -25,7 +25,7 @@ import android.widget.Toast;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.suboverlay.R;
+import com.earlln.overlay.R;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,7 +39,7 @@ import java.util.List;
  */
 public final class NotePanelController {
 
-    private static final String TAG = "SubOverlay";
+    private static final String TAG = "EarllnOverlay";
     private static final int MAX_ENTRIES = 500;
     private static final long STATUS_HIDE_MS = 6000;
 

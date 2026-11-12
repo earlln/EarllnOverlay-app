@@ -1,4 +1,4 @@
-package com.suboverlay.service;
+package com.earlln.overlay.service;
 
 import android.app.Activity;
 import android.app.Notification;
@@ -28,10 +28,10 @@ import android.util.Log;
 import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
 
-import com.suboverlay.R;
-import com.suboverlay.overlay.NoteEntry;
-import com.suboverlay.overlay.NotePanelController;
-import com.suboverlay.ui.MainActivity;
+import com.earlln.overlay.R;
+import com.earlln.overlay.note.NoteEntry;
+import com.earlln.overlay.note.NotePanelController;
+import com.earlln.overlay.ui.MainActivity;
 
 import org.json.JSONObject;
 import org.vosk.Model;
@@ -53,13 +53,13 @@ import java.util.concurrent.RejectedExecutionException;
  */
 public class SubtitleOverlayService extends Service {
 
-    public static final String ACTION_UPDATE_SETTINGS = "com.suboverlay.UPDATE_SETTINGS";
+    public static final String ACTION_UPDATE_SETTINGS = "com.earlln.overlay.UPDATE_SETTINGS";
     public static final String EXTRA_PROJECTION_RESULT_CODE = "projectionResultCode";
     public static final String EXTRA_PROJECTION_DATA = "projectionData";
 
     public static volatile boolean isRunning = false;
 
-    private static final String TAG = "SubOverlay";
+    private static final String TAG = "EarllnOverlay";
     private static final String CHANNEL_ID = "subtitle_overlay_channel";
     private static final int NOTIFICATION_ID = 1;
     private static final int SAMPLE_RATE = 16000;
@@ -92,7 +92,7 @@ public class SubtitleOverlayService extends Service {
     private volatile boolean destroyed = false;
     private boolean pipelineStarted = false;
     private final ExecutorService control = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "SubOverlayControl");
+        Thread t = new Thread(r, "EarllnOverlayControl");
         t.setDaemon(true);
         return t;
     });
@@ -723,7 +723,7 @@ public class SubtitleOverlayService extends Service {
         PendingIntent pi = PendingIntent.getActivity(this, 0,
             new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("SubOverlay 실행 중")
+            .setContentTitle("EarllnOverlay 실행 중")
             .setContentText("📝 자막 노트 실행 중 · 화면 위 버튼으로 열기")
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentIntent(pi)

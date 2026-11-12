@@ -1,4 +1,4 @@
-package com.suboverlay.ui;
+package com.earlln.overlay.ui;
 
 import android.app.Activity;
 import android.content.Intent;
@@ -14,9 +14,9 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
-import com.suboverlay.R;
-import com.suboverlay.databinding.ActivityMainBinding;
-import com.suboverlay.service.SubtitleOverlayService;
+import com.earlln.overlay.R;
+import com.earlln.overlay.databinding.ActivityMainBinding;
+import com.earlln.overlay.service.SubtitleOverlayService;
 
 public class MainActivity extends AppCompatActivity {
 

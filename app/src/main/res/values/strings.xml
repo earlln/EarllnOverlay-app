@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">SubOverlay</string>
+    <string name="app_name">EarllnOverlay</string>
     <string name="stt_model_small_desc">가볍고 빠름 (약 40MB) · 저사양 기기 권장</string>
     <string name="stt_model_large_desc">인식 정확도 향상 (약 128MB) · 메모리 4GB 이상 권장, 로딩 수 초 소요</string>
 </resources>
