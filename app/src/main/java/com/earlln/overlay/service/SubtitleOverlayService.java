@@ -632,7 +632,7 @@ public class SubtitleOverlayService extends Service {
                 String partial = extract(partialJson, "partial");
                 if (partial.isEmpty() || partial.equals(lastPartial)) continue;
                 lastPartial = partial;
-                long now = System.currentTimeMillis();
+                now = System.currentTimeMillis();
                 if (segmentStart == 0) segmentStart = now;
 
                 // 계속 이어지는 발화는 강제로 끊어서 번역 → 지연/품질 개선
