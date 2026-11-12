@@ -33,6 +33,9 @@ jobs:
           curl -L "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar" -o gradle/wrapper/gradle-wrapper.jar
           chmod +x gradlew
 
+      - name: 단위 테스트
+        run: ./gradlew testDebugUnitTest --stacktrace
+
       - name: Debug APK 빌드
         run: ./gradlew assembleDebug --stacktrace
 

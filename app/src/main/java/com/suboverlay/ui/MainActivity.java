@@ -2,6 +2,7 @@ package com.suboverlay.ui;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
@@ -22,6 +23,7 @@ public class MainActivity extends AppCompatActivity {
     private ActivityMainBinding binding;
     private MediaProjectionManager projectionManager;
     private boolean overlayGranted = false;
+    private SharedPreferences prefs;
 
     // MediaProjection 권한 요청
     private final ActivityResultLauncher<Intent> projectionLauncher =
@@ -61,9 +63,12 @@ public class MainActivity extends AppCompatActivity {
         setContentView(binding.getRoot());
 
         projectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+        prefs = getSharedPreferences("settings", MODE_PRIVATE);
 
+        restoreSettings();
         setupUI();
-        checkAndRequestPermissions();
+        // 이미 실행 중이면 권한/화면공유를 다시 묻지 않음
+        if (!SubtitleOverlayService.isRunning) checkAndRequestPermissions();
     }
 
     private void setupUI() {
@@ -103,7 +108,54 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        // STT 모델 토글
+        binding.toggleSttModel.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            if (isChecked) {
+                updateSttModelDesc();
+                sendSettingsBroadcast();
+            }
+        });
+        updateSttModelDesc();
+
         updateButtonState();
+    }
+
+    private void updateSttModelDesc() {
+        binding.tvSttModelDesc.setText("large".equals(getSelectedSttModel())
+            ? R.string.stt_model_large_desc : R.string.stt_model_small_desc);
+    }
+
+    /** 이전 실행 때의 설정 복원 (리스너 등록 전에 호출) */
+    private void restoreSettings() {
+        binding.sliderFontSize.setValue(clamp(prefs.getInt("fontSize", 18), 12, 28));
+        binding.tvFontSizeLabel.setText("글자 크기: " + (int) binding.sliderFontSize.getValue() + "sp");
+        int alpha = prefs.getInt("bgAlpha", 180);
+        binding.sliderBgAlpha.setValue(clamp(alpha - alpha % 5, 0, 255));
+
+        String lang = prefs.getString("langMode", "both");
+        binding.toggleLang.check("ko".equals(lang) ? R.id.btnLangKo
+            : "en".equals(lang) ? R.id.btnLangEn : R.id.btnLangBoth);
+
+        boolean mic = "mic".equals(prefs.getString("audioSource", "internal"));
+        binding.toggleAudioSource.check(mic ? R.id.btnAudioMic : R.id.btnAudioInternal);
+        binding.tvAudioSourceDesc.setText(mic ? "마이크로 주변 소리 인식" : "폰 내부 소리만 인식 (볼륨 0도 가능)");
+
+        boolean large = "large".equals(prefs.getString("sttModel", "small"));
+        binding.toggleSttModel.check(large ? R.id.btnModelLarge : R.id.btnModelSmall);
+    }
+
+    private static int clamp(int v, int min, int max) {
+        return Math.max(min, Math.min(max, v));
+    }
+
+    private void saveSettings() {
+        prefs.edit()
+            .putInt("fontSize", (int) binding.sliderFontSize.getValue())
+            .putInt("bgAlpha", (int) binding.sliderBgAlpha.getValue())
+            .putString("langMode", getSelectedLang())
+            .putString("audioSource", getSelectedAudioSource())
+            .putString("sttModel", getSelectedSttModel())
+            .apply();
     }
 
     private void checkAndRequestPermissions() {
@@ -128,25 +180,24 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startSubtitleService(int resultCode, Intent data) {
-        // Activity에서 직접 MediaProjection 생성 후 static으로 전달 (올바른 방식)
-        try {
-            SubtitleOverlayService.pendingMediaProjection =
-                projectionManager.getMediaProjection(resultCode, data);
-        } catch (Exception e) {
-            android.util.Log.e("MainActivity", "MediaProjection 생성 실패: " + e.getMessage());
-            SubtitleOverlayService.pendingMediaProjection = null;
-        }
-
+        // MediaProjection 은 서비스가 mediaProjection 타입으로 startForeground 한 뒤에
+        // 생성해야 한다 (Android 10+ 요구사항). 동의 결과를 서비스로 그대로 전달.
         Intent serviceIntent = new Intent(this, SubtitleOverlayService.class);
-        serviceIntent.putExtra("fontSize", (int) binding.sliderFontSize.getValue());
-        serviceIntent.putExtra("bgAlpha", (int) binding.sliderBgAlpha.getValue());
-        serviceIntent.putExtra("langMode", getSelectedLang());
-        serviceIntent.putExtra("audioSource", getSelectedAudioSource());
+        serviceIntent.putExtra(SubtitleOverlayService.EXTRA_PROJECTION_RESULT_CODE, resultCode);
+        serviceIntent.putExtra(SubtitleOverlayService.EXTRA_PROJECTION_DATA, data);
+        putSettings(serviceIntent);
+        saveSettings();
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent);
-        } else {
-            startService(serviceIntent);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent);
+            } else {
+                startService(serviceIntent);
+            }
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "서비스 시작 실패", e);
+            Toast.makeText(this, "자막 서비스를 시작하지 못했습니다: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            return;
         }
 
         updateButtonState();
@@ -161,12 +212,25 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void sendSettingsBroadcast() {
+        saveSettings();
+        if (!SubtitleOverlayService.isRunning) return;
         Intent intent = new Intent(SubtitleOverlayService.ACTION_UPDATE_SETTINGS);
+        intent.setPackage(getPackageName()); // 앱 내부로만 전달 (Android 14 암시적 브로드캐스트 제한 대응)
+        putSettings(intent);
+        sendBroadcast(intent);
+    }
+
+    private void putSettings(Intent intent) {
         intent.putExtra("fontSize", (int) binding.sliderFontSize.getValue());
         intent.putExtra("bgAlpha", (int) binding.sliderBgAlpha.getValue());
         intent.putExtra("langMode", getSelectedLang());
         intent.putExtra("audioSource", getSelectedAudioSource());
-        sendBroadcast(intent);
+        intent.putExtra("sttModel", getSelectedSttModel());
+    }
+
+    private String getSelectedSttModel() {
+        return binding.toggleSttModel.getCheckedButtonId() == R.id.btnModelLarge
+            ? "large" : "small";
     }
 
     private String getSelectedLang() {

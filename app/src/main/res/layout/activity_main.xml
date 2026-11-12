@@ -161,6 +161,57 @@
             android:textSize="11sp"
             android:layout_marginBottom="20dp"/>
 
+        <!-- STT 모델 선택 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="음성 인식 모델"
+            android:textColor="#AAAACC"
+            android:textSize="12sp"
+            android:layout_marginBottom="8dp"/>
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/toggleSttModel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:singleSelection="true"
+            app:selectionRequired="true"
+            android:layout_marginBottom="8dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnModelSmall"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="⚡ 빠름"
+                android:textColor="@color/btn_lang_text"
+                app:backgroundTint="@color/btn_lang_bg"
+                app:strokeColor="#7C6AFF"
+                app:strokeWidth="1.5dp"
+                android:checked="true"/>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnModelLarge"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🎯 정확"
+                android:textColor="@color/btn_lang_text"
+                app:backgroundTint="@color/btn_lang_bg"
+                app:strokeColor="#7C6AFF"
+                app:strokeWidth="1.5dp"/>
+
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <TextView
+            android:id="@+id/tvSttModelDesc"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/stt_model_small_desc"
+            android:textColor="#5555AA"
+            android:textSize="11sp"
+            android:layout_marginBottom="20dp"/>
+
         <!-- 글자 크기 -->
         <TextView
             android:id="@+id/tvFontSizeLabel"
@@ -219,7 +270,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="1. ▶ 자막 시작 버튼 탭\n2. 권한 요청 시 모두 허용\n3. 다른 앱(X, 브라우저 등) 열어서 영상 재생\n4. 화면 하단에 자막이 자동으로 표시됨\n\n⚠ 첫 실행 시 번역 모델 다운로드(약 50MB)\n⚠ 마이크로 주변 소리를 인식합니다"
+            android:text="1. ▶ 자막 시작 버튼 탭\n2. 권한 요청 시 모두 허용\n3. 다른 앱(X, 브라우저 등) 열어서 영상 재생\n4. 화면 하단에 자막이 자동으로 표시됨\n\n⚠ 첫 실행 시 모델 다운로드 필요 (Wi-Fi 권장)\n   · 음성 인식: 빠름 약 40MB / 정확 약 128MB\n   · 번역: 약 30MB\n⚠ 화면 공유 권한은 내부 오디오 캡처에 사용됩니다"
             android:textColor="#6666AA"
             android:textSize="13sp"
             android:lineSpacingExtra="4dp"/>
