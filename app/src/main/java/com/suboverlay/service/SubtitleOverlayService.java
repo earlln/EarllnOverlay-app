@@ -11,8 +11,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
-import android.graphics.Color;
-import android.graphics.PixelFormat;
+import android.content.res.Configuration;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioPlaybackCaptureConfiguration;
@@ -25,16 +24,13 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
-import android.view.Gravity;
-import android.view.LayoutInflater;
-import android.view.View;
-import android.view.WindowManager;
-import android.widget.TextView;
 
 import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
 
 import com.suboverlay.R;
+import com.suboverlay.overlay.NoteEntry;
+import com.suboverlay.overlay.NotePanelController;
 import com.suboverlay.ui.MainActivity;
 
 import org.json.JSONObject;
@@ -48,7 +44,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 
 /**
- * 오디오 캡처 → Vosk STT → MLKit 번역 → 오버레이 자막.
+ * 오디오 캡처 → Vosk STT → MLKit 번역 → '📝 자막 노트' 오버레이 패널.
  *
  * 스레드 구조
  *  - main      : UI, 번역(TranslationEngine), 설정 수신
@@ -67,7 +63,6 @@ public class SubtitleOverlayService extends Service {
     private static final String CHANNEL_ID = "subtitle_overlay_channel";
     private static final int NOTIFICATION_ID = 1;
     private static final int SAMPLE_RATE = 16000;
-    private static final long HIDE_DELAY_MS = 5000;
 
     /** 쉬지 않고 말할 때 문장을 강제로 끊는 기준 (긴 입력은 번역 품질과 표시가 모두 나빠짐) */
     private static final long MAX_SEGMENT_MS = 12_000;
@@ -80,14 +75,11 @@ public class SubtitleOverlayService extends Service {
     private static final int MAX_AUTO_RESTARTS = 5;
     private static final long AUTO_RESTART_WINDOW_MS = 60_000;
 
-    private static final int EN_PARTIAL_MAX_CHARS = 110;
+    private static final int EN_PARTIAL_MAX_CHARS = 160;
 
     // ── UI (main) ──
-    private WindowManager windowManager;
-    private View overlayView;
-    private TextView tvOverlayKo, tvOverlayEn, tvStatus;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final Runnable hideRunnable = this::hideSubtitles;
+    private NotePanelController notePanel;
 
     // ── 설정 ──
     private int fontSize = 18;
@@ -149,12 +141,14 @@ public class SubtitleOverlayService extends Service {
     public void onCreate() {
         super.onCreate();
         isRunning = true;
-        windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+        notePanel = new NotePanelController(this, mainHandler);
         createNotificationChannel();
         registerReceiver(settingsReceiver,
             new IntentFilter(ACTION_UPDATE_SETTINGS), Context.RECEIVER_NOT_EXPORTED);
         translationEngine = new TranslationEngine(mainHandler, new TranslationEngine.Listener() {
-            @Override public void onTranslated(String ko) { showKorean(ko); }
+            @Override public void onPartialTranslated(String ko) {
+                if (!destroyed && !"en".equals(langMode)) notePanel.setLiveKo(ko);
+            }
             @Override public void onStatus(String msg) { setStatus(msg); }
         });
     }
@@ -185,7 +179,8 @@ public class SubtitleOverlayService extends Service {
             }
         }
 
-        if (!createOverlay()) {
+        if (!notePanel.show()) {
+            // 오버레이 권한이 취소된 경우 등
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -226,15 +221,18 @@ public class SubtitleOverlayService extends Service {
             try { mp.unregisterCallback(projectionCallback); mp.stop(); } catch (Exception ignored) {}
         }
         if (translationEngine != null) translationEngine.close();
-        if (overlayView != null && windowManager != null) {
-            try { windowManager.removeView(overlayView); } catch (Exception ignored) {}
-            overlayView = null;
-        }
+        if (notePanel != null) notePanel.destroy(); // 기록도 함께 삭제됨
         try { unregisterReceiver(settingsReceiver); } catch (Exception ignored) {}
         super.onDestroy();
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (notePanel != null) notePanel.onConfigurationChanged();
+    }
 
     /** 앱을 최근 앱에서 스와이프로 종료할 때 서비스도 함께 종료 */
     @Override
@@ -295,7 +293,8 @@ public class SubtitleOverlayService extends Service {
         if (newLang != null && !newLang.equals(langMode)) {
             langMode = newLang;
             if ("en".equals(newLang)) translationEngine.resetPending();
-            refreshVisibility();
+            // "English 전용"일 때 쌓인 문장도 번역이 필요해지면 뒤늦게 번역
+            else mainHandler.post(this::translateMissingEntries);
         }
 
         String newSource = intent.getStringExtra("audioSource");
@@ -664,112 +663,51 @@ public class SubtitleOverlayService extends Service {
         if (destroyed) return;
         String display = TextNormalizer.tail(TextNormalizer.forTranslation(raw, false), EN_PARTIAL_MAX_CHARS);
         if (display == null || display.isEmpty()) return;
-        showEnglish(display);
+        notePanel.setLive(display);
         if (!"en".equals(langMode)) translationEngine.submitPartial(raw);
     }
 
     private void onFinalResult(String raw) {
         if (destroyed) return;
-        String display = TextNormalizer.forTranslation(raw, true);
-        if (display.isEmpty()) return;
-        showEnglish(display);
-        if (!"en".equals(langMode)) translationEngine.translateFinal(raw);
+        String sentence = TextNormalizer.forTranslation(raw, true);
+        if (sentence.isEmpty()) return;
+        notePanel.clearLive();
+        NoteEntry entry = notePanel.addEntry(sentence);
+        if (!"en".equals(langMode)) requestTranslation(entry);
+    }
+
+    /** 문장 하나 번역 → 해당 문장에 결과를 붙인다 */
+    private void requestTranslation(NoteEntry entry) {
+        entry.koState = NoteEntry.KoState.PENDING;
+        notePanel.onEntryUpdated(entry);
+        translationEngine.translateFinal(entry.en, ko -> {
+            if (destroyed) return;
+            entry.ko = ko;
+            entry.koState = ko != null ? NoteEntry.KoState.DONE : NoteEntry.KoState.FAILED;
+            notePanel.onEntryUpdated(entry);
+        });
+    }
+
+    private void translateMissingEntries() {
+        if (destroyed || "en".equals(langMode)) return;
+        for (NoteEntry e : notePanel.entries()) {
+            if (e.koState == NoteEntry.KoState.NONE) requestTranslation(e);
+        }
     }
 
     // ── 오버레이 UI (main) ────────────────────────────────────────────────────
 
-    private boolean createOverlay() {
-        if (overlayView != null) return true;
-        try {
-            overlayView = LayoutInflater.from(this).inflate(R.layout.overlay_subtitle, null);
-            tvOverlayKo = overlayView.findViewById(R.id.tvOverlayKo);
-            tvOverlayEn = overlayView.findViewById(R.id.tvOverlayEn);
-            tvStatus    = overlayView.findViewById(R.id.tvStatus);
-
-            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                    | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT
-            );
-            params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-            params.y = 100;
-
-            windowManager.addView(overlayView, params);
-            applySettings();
-            return true;
-        } catch (Exception e) {
-            // 오버레이 권한이 취소된 경우 등
-            Log.e(TAG, "오버레이 생성 실패", e);
-            overlayView = null;
-            return false;
-        }
-    }
-
     private void applySettings() {
         mainHandler.post(() -> {
-            if (overlayView == null) return;
-            tvOverlayKo.setTextSize(fontSize);
-            tvOverlayEn.setTextSize(Math.max(12, fontSize - 3));
-            int a = Math.max(0, Math.min(255, bgAlpha));
-            tvOverlayKo.setBackgroundColor(Color.argb(a, 0, 0, 0));
-            tvOverlayEn.setBackgroundColor(Color.argb(a * 5 / 6, 0, 0, 0));
+            if (!destroyed) notePanel.applySettings(fontSize, bgAlpha, langMode);
         });
     }
 
-    private void showEnglish(String en) {
-        if (overlayView == null) return;
-        if ("ko".equals(langMode)) return;
-        tvStatus.setVisibility(View.GONE);
-        tvOverlayEn.setText(en);
-        tvOverlayEn.setVisibility(View.VISIBLE);
-        scheduleHide();
-    }
-
-    private void showKorean(String ko) {
-        if (overlayView == null || destroyed) return;
-        if ("en".equals(langMode)) return;
-        tvStatus.setVisibility(View.GONE);
-        tvOverlayKo.setText(ko);
-        tvOverlayKo.setVisibility(View.VISIBLE);
-        scheduleHide();
-    }
-
-    /** 언어 모드 변경 시 숨겨야 하는 줄 정리 */
-    private void refreshVisibility() {
-        mainHandler.post(() -> {
-            if (overlayView == null) return;
-            if ("ko".equals(langMode)) tvOverlayEn.setVisibility(View.GONE);
-            if ("en".equals(langMode)) tvOverlayKo.setVisibility(View.GONE);
-        });
-    }
-
-    private void scheduleHide() {
-        mainHandler.removeCallbacks(hideRunnable);
-        mainHandler.postDelayed(hideRunnable, HIDE_DELAY_MS);
-    }
-
-    private void hideSubtitles() {
-        if (overlayView == null) return;
-        tvOverlayKo.setVisibility(View.GONE);
-        tvOverlayEn.setVisibility(View.GONE);
-        tvOverlayKo.setText("");
-        tvOverlayEn.setText("");
-        tvStatus.setVisibility(View.VISIBLE);
-    }
-
+    /** 상태 안내: 플로팅 버튼 아래 작은 라벨에 표시 (어느 스레드에서나 호출 가능) */
     private void setStatus(String msg) {
         Log.d(TAG, "STATUS: " + msg);
         mainHandler.post(() -> {
-            if (tvStatus == null || destroyed) return;
-            tvStatus.setText(msg);
-            // 자막이 표시 중이면 상태창은 자막이 사라진 뒤에 보임
-            boolean subtitleVisible = tvOverlayKo.getVisibility() == View.VISIBLE
-                || tvOverlayEn.getVisibility() == View.VISIBLE;
-            tvStatus.setVisibility(subtitleVisible ? View.GONE : View.VISIBLE);
+            if (!destroyed) notePanel.setStatus(msg);
         });
     }
 
@@ -786,7 +724,7 @@ public class SubtitleOverlayService extends Service {
             new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("SubOverlay 실행 중")
-            .setContentText("오프라인 실시간 자막 활성화됨")
+            .setContentText("📝 자막 노트 실행 중 · 화면 위 버튼으로 열기")
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentIntent(pi)
             .setOngoing(true)
