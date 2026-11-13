@@ -95,12 +95,19 @@ public final class NotePanelController {
     private int fontSize = 18;
     private int bgAlpha = 180;
 
+    // ⏻ 종료 (두 번 눌러야 종료 → 실수로 기록이 지워지는 것 방지)
+    private final Runnable onQuit;
+    private TextView btnQuit;
+    private boolean quitArmed = false;
+    private final Runnable disarmQuitRunnable = this::disarmQuit;
+
     private final Runnable hideStatusRunnable = () -> {
         if (tvStatus != null) tvStatus.setVisibility(View.GONE);
     };
 
-    public NotePanelController(Context ctx, Handler mainHandler) {
+    public NotePanelController(Context ctx, Handler mainHandler, Runnable onQuit) {
         this.ctx = ctx;
+        this.onQuit = onQuit;
         this.wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
         this.handler = mainHandler;
         this.touchSlop = ViewConfiguration.get(ctx).getScaledTouchSlop();
@@ -248,6 +255,7 @@ public final class NotePanelController {
     public void destroy() {
         handler.removeCallbacks(hideStatusRunnable);
         handler.removeCallbacks(barHideRunnable);
+        handler.removeCallbacks(disarmQuitRunnable);
         removeBar();
         safeRemove(panelRoot);
         safeRemove(tabView);
@@ -396,6 +404,8 @@ public final class NotePanelController {
         btnExpand.setOnClickListener(v -> toggleExpand());
         panelRoot.findViewById(R.id.btnHide).setOnClickListener(v -> hidePanel());
         panelRoot.findViewById(R.id.btnClose).setOnClickListener(v -> closePanel());
+        btnQuit = panelRoot.findViewById(R.id.btnQuit);
+        btnQuit.setOnClickListener(v -> onQuitTapped());
 
         stylePanel();
         updateCounts();
@@ -476,6 +486,32 @@ public final class NotePanelController {
         if (barView == null) return;
         tvBarKo.setVisibility(View.GONE);
         tvBarEn.setVisibility(View.GONE);
+    }
+
+    // ── 종료 ────────────────────────────────────────────────────────────────
+
+    private void onQuitTapped() {
+        if (quitArmed) {
+            handler.removeCallbacks(disarmQuitRunnable);
+            onQuit.run();
+            return;
+        }
+        quitArmed = true;
+        btnQuit.setText("종료?");
+        btnQuit.setTextSize(12);
+        btnQuit.getLayoutParams().width = dp(52);
+        btnQuit.requestLayout();
+        toast("한 번 더 누르면 자막이 종료됩니다 (기록 삭제)");
+        handler.postDelayed(disarmQuitRunnable, 3000);
+    }
+
+    private void disarmQuit() {
+        quitArmed = false;
+        if (btnQuit == null) return;
+        btnQuit.setText("⏻");
+        btnQuit.setTextSize(16);
+        btnQuit.getLayoutParams().width = dp(36);
+        btnQuit.requestLayout();
     }
 
     // ── 복사 / 공유 ──────────────────────────────────────────────────────────

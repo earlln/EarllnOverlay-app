@@ -37,7 +37,10 @@
         <TextView android:id="@+id/btnHide" style="@style/NotePanelButton" android:text="—"
             android:contentDescription="숨기기"/>
         <TextView android:id="@+id/btnClose" style="@style/NotePanelButton" android:text="✕"
-            android:contentDescription="닫기"/>
+            android:contentDescription="패널 닫기"/>
+        <TextView android:id="@+id/btnQuit" style="@style/NotePanelButton" android:text="⏻"
+            android:textColor="#FF8A80"
+            android:contentDescription="자막 종료"/>
     </LinearLayout>
 
     <!-- 캡처 상태 + 소리 입력 여부 (원인 파악용, 항상 표시) -->

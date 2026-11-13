@@ -55,6 +55,8 @@ import java.util.concurrent.RejectedExecutionException;
 public class SubtitleOverlayService extends Service {
 
     public static final String ACTION_UPDATE_SETTINGS = "com.earlln.overlay.UPDATE_SETTINGS";
+    /** 알림의 '종료' 버튼 */
+    public static final String ACTION_STOP = "com.earlln.overlay.STOP";
     public static final String EXTRA_PROJECTION_RESULT_CODE = "projectionResultCode";
     public static final String EXTRA_PROJECTION_DATA = "projectionData";
 
@@ -71,6 +73,8 @@ public class SubtitleOverlayService extends Service {
 
     /** 영상이 재생 중인데 내부 오디오가 이 시간 동안 완전 무음이면 캡처가 막힌 것으로 판단 → 마이크 전환 */
     private static final long BLOCKED_DETECT_MS = 4_000;
+    /** 이 시간 동안 들어오는 소리가 없고 재생 중인 미디어도 없으면 '영상 앱 음소거 해제' 안내 */
+    private static final long NO_AUDIO_HINT_MS = 8_000;
     /** 이 값 이상의 진폭이 있으면 '소리 있음' (16bit 기준, 약 -40dBFS) */
     private static final int SOUND_PEAK_THRESHOLD = 300;
 
@@ -148,7 +152,7 @@ public class SubtitleOverlayService extends Service {
     public void onCreate() {
         super.onCreate();
         isRunning = true;
-        notePanel = new NotePanelController(this, mainHandler);
+        notePanel = new NotePanelController(this, mainHandler, this::stopSelf);
         audioManager = getSystemService(AudioManager.class);
         createNotificationChannel();
         registerReceiver(settingsReceiver,
@@ -163,6 +167,10 @@ public class SubtitleOverlayService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            stopSelf(); // 알림의 '종료' 버튼
+            return START_NOT_STICKY;
+        }
         boolean hasProjectionData = intent != null && intent.hasExtra(EXTRA_PROJECTION_DATA);
         startForegroundSafely(hasProjectionData);
 
@@ -571,6 +579,8 @@ public class SubtitleOverlayService extends Service {
         long lastMusicCheck = 0;
         long lastLevelReport = 0;
         boolean soundInWindow = false;
+        long quietSince = System.currentTimeMillis();
+        boolean quietHinted = false;
         boolean fallbackRequested = false;
         boolean deviceError = false;
 
@@ -598,6 +608,19 @@ public class SubtitleOverlayService extends Service {
                 final boolean snd = soundInWindow;
                 soundInWindow = false;
                 mainHandler.post(() -> { if (!destroyed) notePanel.setAudioLevel(snd); });
+            }
+
+            // 한동안 소리가 전혀 없고 시스템에도 재생 중인 미디어가 없으면 → 영상 앱 음소거 안내 (1회)
+            if (peak >= SOUND_PEAK_THRESHOLD) {
+                quietSince = now;
+                quietHinted = false;
+            } else if (!quietHinted && now - quietSince >= NO_AUDIO_HINT_MS) {
+                quietHinted = true;
+                if (audioManager == null || !audioManager.isMusicActive()) {
+                    setStatus(internal
+                        ? "🔇 들어오는 소리가 없습니다\n영상 앱의 음소거(🔇)를 해제해 주세요 (휴대폰 볼륨은 0이어도 됩니다)"
+                        : "🔇 들어오는 소리가 없습니다\n마이크 모드는 휴대폰 볼륨을 켜 두어야 합니다");
+                }
             }
 
             // 내부 오디오가 '완전한 0'(디지털 무음)인데 시스템상 미디어가 재생 중이면 → 캡처 차단으로 판단
@@ -770,6 +793,9 @@ public class SubtitleOverlayService extends Service {
             .setContentText("📝 자막 노트 실행 중 · 화면 위 버튼으로 열기")
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentIntent(pi)
+            .addAction(0, "종료", PendingIntent.getService(this, 1,
+                new Intent(this, SubtitleOverlayService.class).setAction(ACTION_STOP),
+                PendingIntent.FLAG_IMMUTABLE))
             .setOngoing(true)
             .build();
     }
