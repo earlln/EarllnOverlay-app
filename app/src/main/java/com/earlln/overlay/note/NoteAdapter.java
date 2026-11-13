@@ -61,7 +61,7 @@ final class NoteAdapter extends RecyclerView.Adapter<NoteAdapter.VH> {
         // 영어 줄: "ko" 모드에서는 번역이 아직 없을 때만 자리 표시용으로 보여줌
         boolean showEn = !"ko".equals(langMode) || !hasKo;
         h.en.setVisibility(showEn ? View.VISIBLE : View.GONE);
-        h.en.setText(e.en);
+        h.en.setText(e.fromScreen ? "📷 " + e.en : e.en);
 
         // 한국어 줄
         if ("en".equals(langMode)) {
@@ -69,7 +69,7 @@ final class NoteAdapter extends RecyclerView.Adapter<NoteAdapter.VH> {
         } else if (hasKo) {
             h.ko.setVisibility(View.VISIBLE);
             h.ko.setTextColor(COLOR_KO);
-            h.ko.setText(e.ko);
+            h.ko.setText(e.fromScreen && !showEn ? "📷 " + e.ko : e.ko);
         } else if (e.koState == NoteEntry.KoState.FAILED) {
             h.ko.setVisibility(View.VISIBLE);
             h.ko.setTextColor(COLOR_KO_DIM);

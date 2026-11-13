@@ -95,8 +95,17 @@ public final class NotePanelController {
     private int fontSize = 18;
     private int bgAlpha = 180;
 
+    /** 서비스로 전달할 사용자 동작 */
+    public interface Actions {
+        /** ⏻ 두 번 탭 → 자막 종료 */
+        void onQuit();
+        /** 📷 화면 번역 */
+        void onScreenTranslate();
+    }
+
+    private final Actions actions;
+
     // ⏻ 종료 (두 번 눌러야 종료 → 실수로 기록이 지워지는 것 방지)
-    private final Runnable onQuit;
     private TextView btnQuit;
     private boolean quitArmed = false;
     private final Runnable disarmQuitRunnable = this::disarmQuit;
@@ -105,9 +114,9 @@ public final class NotePanelController {
         if (tvStatus != null) tvStatus.setVisibility(View.GONE);
     };
 
-    public NotePanelController(Context ctx, Handler mainHandler, Runnable onQuit) {
+    public NotePanelController(Context ctx, Handler mainHandler, Actions actions) {
         this.ctx = ctx;
-        this.onQuit = onQuit;
+        this.actions = actions;
         this.wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
         this.handler = mainHandler;
         this.touchSlop = ViewConfiguration.get(ctx).getScaledTouchSlop();
@@ -131,6 +140,8 @@ public final class NotePanelController {
             buttonLp.y = dp(36);
 
             btn.setOnTouchListener(new DragListener(buttonRoot, buttonLp, this::togglePanel, false));
+            buttonRoot.findViewById(R.id.btnScreen).setOnTouchListener(
+                new DragListener(buttonRoot, buttonLp, actions::onScreenTranslate, false));
             wm.addView(buttonRoot, buttonLp);
             ensureBar();
             return true;
@@ -183,10 +194,15 @@ public final class NotePanelController {
         return entries;
     }
 
-    /** 확정 문장 추가 */
+    /** 확정 문장 추가 (음성) */
     public NoteEntry addEntry(String en) {
+        return addEntry(en, false);
+    }
+
+    /** 확정 문장 추가. fromScreen=true 면 화면 글자 번역(📷) 문장 */
+    public NoteEntry addEntry(String en, boolean fromScreen) {
         boolean atBottom = isAtBottom();
-        NoteEntry e = new NoteEntry(en);
+        NoteEntry e = new NoteEntry(en, fromScreen);
         entries.add(e);
         adapter.notifyItemInserted(entries.size() - 1);
         if (entries.size() > MAX_ENTRIES) {
@@ -200,7 +216,7 @@ public final class NotePanelController {
             unseen++;
             updateTab();
         }
-        showBarEn(en);
+        if (!fromScreen) showBarEn(en);
         return e;
     }
 
@@ -233,6 +249,24 @@ public final class NotePanelController {
         liveEn = null;
         liveKo = null;
         refreshLive();
+    }
+
+    /** 패널이 닫혀 있거나 접혀 있으면 연다 */
+    public void showPanel() {
+        if (state != PanelState.OPEN) openPanel();
+        else scrollToBottom();
+    }
+
+    /** 화면 캡처 순간에 오버레이가 찍히지 않도록 잠깐 숨김/복원 */
+    public void setCaptureHidden(boolean hidden) {
+        int v = hidden ? View.INVISIBLE : View.VISIBLE;
+        if (buttonRoot != null) buttonRoot.setVisibility(v);
+        if (panelRoot != null) panelRoot.setVisibility(v);
+        if (tabView != null) tabView.setVisibility(v);
+        if (barView != null) {
+            if (hidden) barView.setVisibility(View.INVISIBLE);
+            else updateBarVisibility();
+        }
     }
 
     /** 화면 회전 등 크기 변경 시 창 위치/크기 재조정 */
@@ -493,7 +527,7 @@ public final class NotePanelController {
     private void onQuitTapped() {
         if (quitArmed) {
             handler.removeCallbacks(disarmQuitRunnable);
-            onQuit.run();
+            actions.onQuit();
             return;
         }
         quitArmed = true;

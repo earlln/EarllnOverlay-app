@@ -44,6 +44,9 @@ dependencies {
     // Google MLKit 번역 (온디바이스)
     implementation 'com.google.mlkit:translate:17.0.2'
 
+    // Google MLKit 글자 인식 (온디바이스, 영어/라틴 문자 모델 포함)
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
+
     // Vosk 오프라인 STT (SpeechRecognizer 대체 → 오디오 포커스 충돌 없음)
     implementation 'com.alphacephei:vosk-android:0.3.47'
 

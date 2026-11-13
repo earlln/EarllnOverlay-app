@@ -11,12 +11,19 @@ public final class NoteEntry {
 
     public final long id;
     public final String en;
+    /** true: 화면 글자 번역(📷)으로 추가된 문장, false: 음성 인식 문장 */
+    public final boolean fromScreen;
     public String ko;
     public KoState koState = KoState.NONE;
 
     public NoteEntry(String en) {
+        this(en, false);
+    }
+
+    public NoteEntry(String en, boolean fromScreen) {
         this.id = nextId++;
         this.en = en;
+        this.fromScreen = fromScreen;
     }
 
     /** 표시 모드에 맞춰 문장 하나를 텍스트로 만든다 (복사/공유용) */

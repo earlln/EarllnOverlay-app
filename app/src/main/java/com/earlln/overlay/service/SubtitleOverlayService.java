@@ -123,6 +123,7 @@ public class SubtitleOverlayService extends Service {
         public void onStop() {
             Log.w(TAG, "MediaProjection 종료됨 (사용자가 화면 공유를 중지)");
             mediaProjection = null;
+            screenCapturer.setProjection(null);
             if (!"mic".equals(audioSource)) {
                 setStatus("⚠️ 화면 공유가 중지되어 마이크로 전환합니다");
                 runOnControl(() -> restartCapture(captureSession));
@@ -135,6 +136,12 @@ public class SubtitleOverlayService extends Service {
     private Model voskModel;
     private VoskModelManager.ModelSpec loadedSpec;
     private Recognizer recognizer;
+
+    // ── 화면 글자 번역 (main) ──
+    private ScreenTextCapturer screenCapturer;
+    /** 이미 노트에 추가한 화면 문장 (같은 화면을 다시 눌러도 중복 추가 안 함) */
+    private final java.util.LinkedHashSet<String> screenSeen = new java.util.LinkedHashSet<>();
+    private static final int MAX_SCREEN_SEEN = 300;
 
     // ── 번역 (main) ──
     private TranslationEngine translationEngine;
@@ -152,7 +159,11 @@ public class SubtitleOverlayService extends Service {
     public void onCreate() {
         super.onCreate();
         isRunning = true;
-        notePanel = new NotePanelController(this, mainHandler, this::stopSelf);
+        notePanel = new NotePanelController(this, mainHandler, new NotePanelController.Actions() {
+            @Override public void onQuit() { stopSelf(); }
+            @Override public void onScreenTranslate() { translateScreen(); }
+        });
+        screenCapturer = new ScreenTextCapturer(this, mainHandler);
         audioManager = getSystemService(AudioManager.class);
         createNotificationChannel();
         registerReceiver(settingsReceiver,
@@ -188,6 +199,7 @@ public class SubtitleOverlayService extends Service {
                 MediaProjection old = mediaProjection;
                 mediaProjection = newProjection;
                 internalBlocked = false;
+                screenCapturer.setProjection(newProjection);
                 if (old != null) {
                     try { old.unregisterCallback(projectionCallback); old.stop(); }
                     catch (Exception ignored) {}
@@ -237,6 +249,7 @@ public class SubtitleOverlayService extends Service {
         if (mp != null) {
             try { mp.unregisterCallback(projectionCallback); mp.stop(); } catch (Exception ignored) {}
         }
+        if (screenCapturer != null) screenCapturer.release();
         if (translationEngine != null) translationEngine.close();
         if (notePanel != null) notePanel.destroy(); // 기록도 함께 삭제됨
         try { unregisterReceiver(settingsReceiver); } catch (Exception ignored) {}
@@ -758,6 +771,56 @@ public class SubtitleOverlayService extends Service {
         if (destroyed || "en".equals(langMode)) return;
         for (NoteEntry e : notePanel.entries()) {
             if (e.koState == NoteEntry.KoState.NONE) requestTranslation(e);
+        }
+    }
+
+    // ── 화면 글자 번역 (main) ─────────────────────────────────────────────────
+
+    private void translateScreen() {
+        if (destroyed || screenCapturer.isBusy()) return;
+        if (mediaProjection == null) {
+            setStatus("⚠️ 화면 공유 권한이 없어 화면 번역을 할 수 없습니다\n자막을 종료 후 다시 시작해 주세요");
+            return;
+        }
+        setStatus("📷 화면 글자 읽는 중...");
+        // 오버레이가 캡처에 찍히지 않도록 숨기고, 화면에 반영될 시간을 준 뒤 캡처
+        notePanel.setCaptureHidden(true);
+        mainHandler.postDelayed(() -> {
+            if (destroyed) return;
+            screenCapturer.capture(new ScreenTextCapturer.Callback() {
+                @Override public void onResult(java.util.List<String> blocks) {
+                    if (destroyed) return;
+                    notePanel.setCaptureHidden(false);
+                    addScreenSentences(blocks);
+                }
+                @Override public void onError(String message) {
+                    if (destroyed) return;
+                    notePanel.setCaptureHidden(false);
+                    setStatus("⚠️ " + message);
+                }
+            });
+        }, 200);
+    }
+
+    private void addScreenSentences(java.util.List<String> blocks) {
+        java.util.List<String> sentences = ScreenTextFilter.sentences(blocks);
+        int added = 0;
+        for (String s : sentences) {
+            if (!screenSeen.add(s)) continue; // 이미 추가한 문장
+            if (screenSeen.size() > MAX_SCREEN_SEEN) {
+                screenSeen.remove(screenSeen.iterator().next());
+            }
+            NoteEntry entry = notePanel.addEntry(s, true);
+            if (!"en".equals(langMode)) requestTranslation(entry);
+            added++;
+        }
+        if (added > 0) {
+            setStatus("📷 화면에서 " + added + "문장을 번역합니다");
+            notePanel.showPanel();
+        } else if (!sentences.isEmpty()) {
+            setStatus("📷 새로운 문장이 없습니다 (이미 노트에 있음)");
+        } else {
+            setStatus("📷 화면에서 영어 문장을 찾지 못했습니다\n(넷플릭스 등 캡처가 막힌 앱은 번역할 수 없습니다)");
         }
     }
 
