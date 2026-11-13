@@ -101,9 +101,12 @@ public final class NotePanelController {
         void onQuit();
         /** 📷 화면 번역 */
         void onScreenTranslate();
+        /** ⏸ 일시정지 / ▶ 재개 */
+        void onTogglePause();
     }
 
     private final Actions actions;
+    private TextView btnPause;
 
     // ⏻ 종료 (두 번 눌러야 종료 → 실수로 기록이 지워지는 것 방지)
     private TextView btnQuit;
@@ -140,6 +143,9 @@ public final class NotePanelController {
             buttonLp.y = dp(36);
 
             btn.setOnTouchListener(new DragListener(buttonRoot, buttonLp, this::togglePanel, false));
+            btnPause = buttonRoot.findViewById(R.id.btnPause);
+            btnPause.setOnTouchListener(
+                new DragListener(buttonRoot, buttonLp, actions::onTogglePause, false));
             buttonRoot.findViewById(R.id.btnScreen).setOnTouchListener(
                 new DragListener(buttonRoot, buttonLp, actions::onScreenTranslate, false));
             wm.addView(buttonRoot, buttonLp);
@@ -249,6 +255,18 @@ public final class NotePanelController {
         liveEn = null;
         liveKo = null;
         refreshLive();
+    }
+
+    /** 일시정지 상태 표시 (⏸ ↔ ▶) */
+    public void setPaused(boolean paused) {
+        if (btnPause != null) {
+            btnPause.setText(paused ? "▶ 재개" : "⏸");
+            btnPause.setContentDescription(paused ? "재개" : "일시정지");
+            btnPause.setBackgroundResource(paused ? R.drawable.bg_note_button_paused : R.drawable.bg_note_button);
+        }
+        hasSound = null; // 멈춘 동안에는 소리 표시 없음
+        updatePanelStatus();
+        if (paused) clearBar();
     }
 
     /** 패널이 닫혀 있거나 접혀 있으면 연다 */

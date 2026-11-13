@@ -27,6 +27,24 @@
         android:textStyle="bold"
         android:elevation="4dp"/>
 
+    <!-- ⏸ 일시정지 / ▶ 재개 -->
+    <TextView
+        android:id="@+id/btnPause"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:background="@drawable/bg_note_button"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:text="⏸"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:contentDescription="일시정지"
+        android:elevation="4dp"/>
+
     <!-- 📷 화면 글자 번역 (누를 때 한 번 캡처) -->
     <TextView
         android:id="@+id/btnScreen"

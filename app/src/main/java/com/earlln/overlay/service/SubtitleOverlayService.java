@@ -57,6 +57,8 @@ public class SubtitleOverlayService extends Service {
     public static final String ACTION_UPDATE_SETTINGS = "com.earlln.overlay.UPDATE_SETTINGS";
     /** 알림의 '종료' 버튼 */
     public static final String ACTION_STOP = "com.earlln.overlay.STOP";
+    /** 알림의 '일시정지/재개' 버튼 */
+    public static final String ACTION_TOGGLE_PAUSE = "com.earlln.overlay.TOGGLE_PAUSE";
     public static final String EXTRA_PROJECTION_RESULT_CODE = "projectionResultCode";
     public static final String EXTRA_PROJECTION_DATA = "projectionData";
 
@@ -98,6 +100,8 @@ public class SubtitleOverlayService extends Service {
 
     // ── 생명주기 / 스레드 ──
     private volatile boolean destroyed = false;
+    /** 일시정지: 오버레이는 유지하고 녹음/인식/번역만 멈춤 */
+    private volatile boolean paused = false;
     private boolean pipelineStarted = false;
     private final ExecutorService control = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "EarllnOverlayControl");
@@ -162,6 +166,7 @@ public class SubtitleOverlayService extends Service {
         notePanel = new NotePanelController(this, mainHandler, new NotePanelController.Actions() {
             @Override public void onQuit() { stopSelf(); }
             @Override public void onScreenTranslate() { translateScreen(); }
+            @Override public void onTogglePause() { togglePause(); }
         });
         screenCapturer = new ScreenTextCapturer(this, mainHandler);
         audioManager = getSystemService(AudioManager.class);
@@ -180,6 +185,10 @@ public class SubtitleOverlayService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             stopSelf(); // 알림의 '종료' 버튼
+            return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_TOGGLE_PAUSE.equals(intent.getAction())) {
+            if (pipelineStarted) togglePause(); // 알림의 '일시정지/재개' 버튼
             return START_NOT_STICKY;
         }
         boolean hasProjectionData = intent != null && intent.hasExtra(EXTRA_PROJECTION_DATA);
@@ -424,7 +433,7 @@ public class SubtitleOverlayService extends Service {
     }
 
     private void startCapture() {
-        if (destroyed || voskModel == null || captureRunning) return;
+        if (destroyed || paused || voskModel == null || captureRunning) return;
 
         Recognizer rec;
         try {
@@ -739,7 +748,7 @@ public class SubtitleOverlayService extends Service {
     // ── 인식 결과 처리 (main) ─────────────────────────────────────────────────
 
     private void onPartialResult(String raw) {
-        if (destroyed) return;
+        if (destroyed || paused) return; // 일시정지 직전에 들어온 결과는 버림
         String display = TextNormalizer.tail(TextNormalizer.forTranslation(raw, false), EN_PARTIAL_MAX_CHARS);
         if (display == null || display.isEmpty()) return;
         notePanel.setLive(display);
@@ -747,7 +756,7 @@ public class SubtitleOverlayService extends Service {
     }
 
     private void onFinalResult(String raw) {
-        if (destroyed) return;
+        if (destroyed || paused) return; // 일시정지 직전에 들어온 결과는 버림
         String sentence = TextNormalizer.forTranslation(raw, true);
         if (sentence.isEmpty()) return;
         notePanel.clearLive();
@@ -772,6 +781,30 @@ public class SubtitleOverlayService extends Service {
         for (NoteEntry e : notePanel.entries()) {
             if (e.koState == NoteEntry.KoState.NONE) requestTranslation(e);
         }
+    }
+
+    // ── 일시정지 (main) ─────────────────────────────────────────────────────
+
+    private void togglePause() {
+        if (destroyed) return;
+        paused = !paused;
+        notePanel.setPaused(paused);
+        if (paused) {
+            notePanel.clearLive();
+            translationEngine.resetPending(); // 진행 중이던 부분 번역은 버림
+            runOnControl(this::stopCapture);  // 녹음 중지 → 마이크 해제, 배터리 절약
+            setStatus("⏸ 일시정지됨 · ▶ 를 누르면 다시 시작합니다");
+        } else {
+            setStatus("▶ 다시 시작합니다...");
+            runOnControl(this::startCapture);  // 모델이 아직 로딩 중이면 로딩 후 자동 시작
+        }
+        updateNotification();
+    }
+
+    private void updateNotification() {
+        try {
+            getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, buildNotification());
+        } catch (Exception ignored) {}
     }
 
     // ── 화면 글자 번역 (main) ─────────────────────────────────────────────────
@@ -852,10 +885,14 @@ public class SubtitleOverlayService extends Service {
         PendingIntent pi = PendingIntent.getActivity(this, 0,
             new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("EarllnOverlay 실행 중")
-            .setContentText("📝 자막 노트 실행 중 · 화면 위 버튼으로 열기")
+            .setContentTitle(paused ? "EarllnOverlay 일시정지됨" : "EarllnOverlay 실행 중")
+            .setContentText(paused ? "⏸ 음성 인식/번역이 멈춰 있습니다"
+                : "📝 자막 노트 실행 중 · 화면 위 버튼으로 열기")
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentIntent(pi)
+            .addAction(0, paused ? "재개" : "일시정지", PendingIntent.getService(this, 2,
+                new Intent(this, SubtitleOverlayService.class).setAction(ACTION_TOGGLE_PAUSE),
+                PendingIntent.FLAG_IMMUTABLE))
             .addAction(0, "종료", PendingIntent.getService(this, 1,
                 new Intent(this, SubtitleOverlayService.class).setAction(ACTION_STOP),
                 PendingIntent.FLAG_IMMUTABLE))
