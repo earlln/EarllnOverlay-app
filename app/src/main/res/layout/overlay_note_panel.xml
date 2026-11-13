@@ -34,6 +34,8 @@
             android:contentDescription="전체 복사"/>
         <TextView android:id="@+id/btnShare" style="@style/NotePanelButton" android:text="📤"
             android:contentDescription="공유"/>
+        <TextView android:id="@+id/btnClear" style="@style/NotePanelButton" android:text="🗑"
+            android:contentDescription="기록 지우기"/>
         <TextView android:id="@+id/btnExpand" style="@style/NotePanelButton" android:text="⤢"
             android:contentDescription="크기 전환"/>
         <TextView android:id="@+id/btnHide" style="@style/NotePanelButton" android:text="—"

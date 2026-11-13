@@ -103,6 +103,8 @@ public final class NotePanelController {
         void onScreenTranslate();
         /** ⏸ 일시정지 / ▶ 재개 */
         void onTogglePause();
+        /** 🗑 기록을 모두 지운 직후 */
+        void onCleared();
     }
 
     private final Actions actions;
@@ -112,6 +114,11 @@ public final class NotePanelController {
     private TextView btnQuit;
     private boolean quitArmed = false;
     private final Runnable disarmQuitRunnable = this::disarmQuit;
+
+    // 🗑 클리어 (두 번 눌러야 삭제)
+    private TextView btnClear;
+    private boolean clearArmed = false;
+    private final Runnable disarmClearRunnable = this::disarmClear;
 
     private final Runnable hideStatusRunnable = () -> {
         if (tvStatus != null) tvStatus.setVisibility(View.GONE);
@@ -308,6 +315,7 @@ public final class NotePanelController {
         handler.removeCallbacks(hideStatusRunnable);
         handler.removeCallbacks(barHideRunnable);
         handler.removeCallbacks(disarmQuitRunnable);
+        handler.removeCallbacks(disarmClearRunnable);
         removeBar();
         safeRemove(panelRoot);
         safeRemove(tabView);
@@ -459,6 +467,8 @@ public final class NotePanelController {
         btnExpand.setOnClickListener(v -> toggleExpand());
         panelRoot.findViewById(R.id.btnHide).setOnClickListener(v -> hidePanel());
         panelRoot.findViewById(R.id.btnClose).setOnClickListener(v -> closePanel());
+        btnClear = panelRoot.findViewById(R.id.btnClear);
+        btnClear.setOnClickListener(v -> onClearTapped());
         btnQuit = panelRoot.findViewById(R.id.btnQuit);
         btnQuit.setOnClickListener(v -> onQuitTapped());
 
@@ -565,8 +575,52 @@ public final class NotePanelController {
         if (btnQuit == null) return;
         btnQuit.setText("⏹");
         btnQuit.setTextSize(16);
-        btnQuit.getLayoutParams().width = dp(32);
+        btnQuit.getLayoutParams().width = dp(30);
         btnQuit.requestLayout();
+    }
+
+    // ── 클리어 ──────────────────────────────────────────────────────────────
+
+    private void onClearTapped() {
+        if (entries.isEmpty()) {
+            toast("지울 기록이 없습니다");
+            return;
+        }
+        if (clearArmed) {
+            handler.removeCallbacks(disarmClearRunnable);
+            disarmClear();
+            clearEntries();
+            return;
+        }
+        clearArmed = true;
+        btnClear.setText("삭제?");
+        btnClear.setTextSize(12);
+        btnClear.getLayoutParams().width = dp(46);
+        btnClear.requestLayout();
+        toast("한 번 더 누르면 기록이 모두 지워집니다");
+        handler.postDelayed(disarmClearRunnable, 3000);
+    }
+
+    private void disarmClear() {
+        clearArmed = false;
+        if (btnClear == null) return;
+        btnClear.setText("🗑");
+        btnClear.setTextSize(16);
+        btnClear.getLayoutParams().width = dp(30);
+        btnClear.requestLayout();
+    }
+
+    /** 노트 기록 전체 삭제 (자막 실행/일시정지 상태는 그대로) */
+    private void clearEntries() {
+        int n = entries.size();
+        entries.clear();
+        adapter.notifyDataSetChanged();
+        unseen = 0;
+        updateTab();
+        updateCounts();
+        clearBar();
+        actions.onCleared();
+        toast(n + "문장을 지웠습니다");
     }
 
     // ── 복사 / 공유 ──────────────────────────────────────────────────────────

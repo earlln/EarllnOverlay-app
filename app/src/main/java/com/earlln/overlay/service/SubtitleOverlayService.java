@@ -167,6 +167,10 @@ public class SubtitleOverlayService extends Service {
             @Override public void onQuit() { stopSelf(); }
             @Override public void onScreenTranslate() { translateScreen(); }
             @Override public void onTogglePause() { togglePause(); }
+            @Override public void onCleared() {
+                screenSeen.clear(); // 같은 화면을 다시 읽으면 다시 추가되도록
+                setStatus("🗑 기록을 지웠습니다");
+            }
         });
         screenCapturer = new ScreenTextCapturer(this, mainHandler);
         audioManager = getSystemService(AudioManager.class);
