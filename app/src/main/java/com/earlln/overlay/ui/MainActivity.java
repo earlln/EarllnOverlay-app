@@ -1,4 +1,4 @@
-package com.suboverlay.ui;
+package com.earlln.overlay.ui;
 
 import android.app.Activity;
 import android.content.Intent;
@@ -13,9 +13,8 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
-import com.suboverlay.R;
-import com.suboverlay.databinding.ActivityMainBinding;
-import com.suboverlay.service.SubtitleOverlayService;
+import com.earlln.overlay.databinding.ActivityMainBinding;
+import com.earlln.overlay.service.SubtitleOverlayService;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -61,23 +60,12 @@ public class MainActivity extends AppCompatActivity {
         setContentView(binding.getRoot());
 
         projectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
-
         setupUI();
-        checkAndRequestPermissions();
+        // 이미 실행 중이면 권한/화면공유를 다시 묻지 않음
+        if (!SubtitleOverlayService.isRunning) checkAndRequestPermissions();
     }
 
     private void setupUI() {
-        // 자막 크기 슬라이더
-        binding.sliderFontSize.addOnChangeListener((slider, value, fromUser) -> {
-            binding.tvFontSizeLabel.setText("글자 크기: " + (int) value + "sp");
-            sendSettingsBroadcast();
-        });
-
-        // 언어 토글
-        binding.toggleLang.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
-            if (isChecked) sendSettingsBroadcast();
-        });
-
         // 서비스 시작/중지 버튼
         binding.btnToggleService.setOnClickListener(v -> {
             if (SubtitleOverlayService.isRunning) {
@@ -87,21 +75,9 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // 배경 투명도 슬라이더
-        binding.sliderBgAlpha.addOnChangeListener((slider, value, fromUser) -> {
-            sendSettingsBroadcast();
-        });
-
-        // 오디오 소스 토글
-        binding.toggleAudioSource.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
-            if (isChecked) {
-                boolean isInternal = checkedId == R.id.btnAudioInternal;
-                binding.tvAudioSourceDesc.setText(isInternal
-                    ? "폰 내부 소리만 인식 (볼륨 0도 가능)"
-                    : "마이크로 주변 소리 인식");
-                sendSettingsBroadcast();
-            }
-        });
+        // ⚙️ 설정 화면
+        binding.btnSettings.setOnClickListener(v ->
+            startActivity(new Intent(this, SettingsActivity.class)));
 
         updateButtonState();
     }
@@ -128,25 +104,23 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startSubtitleService(int resultCode, Intent data) {
-        // Activity에서 직접 MediaProjection 생성 후 static으로 전달 (올바른 방식)
-        try {
-            SubtitleOverlayService.pendingMediaProjection =
-                projectionManager.getMediaProjection(resultCode, data);
-        } catch (Exception e) {
-            android.util.Log.e("MainActivity", "MediaProjection 생성 실패: " + e.getMessage());
-            SubtitleOverlayService.pendingMediaProjection = null;
-        }
-
+        // MediaProjection 은 서비스가 mediaProjection 타입으로 startForeground 한 뒤에
+        // 생성해야 한다 (Android 10+ 요구사항). 동의 결과를 서비스로 그대로 전달.
         Intent serviceIntent = new Intent(this, SubtitleOverlayService.class);
-        serviceIntent.putExtra("fontSize", (int) binding.sliderFontSize.getValue());
-        serviceIntent.putExtra("bgAlpha", (int) binding.sliderBgAlpha.getValue());
-        serviceIntent.putExtra("langMode", getSelectedLang());
-        serviceIntent.putExtra("audioSource", getSelectedAudioSource());
+        serviceIntent.putExtra(SubtitleOverlayService.EXTRA_PROJECTION_RESULT_CODE, resultCode);
+        serviceIntent.putExtra(SubtitleOverlayService.EXTRA_PROJECTION_DATA, data);
+        AppSettings.load(this).putExtras(serviceIntent);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent);
-        } else {
-            startService(serviceIntent);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent);
+            } else {
+                startService(serviceIntent);
+            }
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "서비스 시작 실패", e);
+            Toast.makeText(this, "자막 서비스를 시작하지 못했습니다: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            return;
         }
 
         updateButtonState();
@@ -158,27 +132,6 @@ public class MainActivity extends AppCompatActivity {
         stopService(serviceIntent);
         // onDestroy가 비동기로 실행되므로 잠시 후 상태 갱신
         binding.btnToggleService.postDelayed(this::updateButtonState, 500);
-    }
-
-    private void sendSettingsBroadcast() {
-        Intent intent = new Intent(SubtitleOverlayService.ACTION_UPDATE_SETTINGS);
-        intent.putExtra("fontSize", (int) binding.sliderFontSize.getValue());
-        intent.putExtra("bgAlpha", (int) binding.sliderBgAlpha.getValue());
-        intent.putExtra("langMode", getSelectedLang());
-        intent.putExtra("audioSource", getSelectedAudioSource());
-        sendBroadcast(intent);
-    }
-
-    private String getSelectedLang() {
-        int id = binding.toggleLang.getCheckedButtonId();
-        if (id == R.id.btnLangKo) return "ko";
-        if (id == R.id.btnLangEn) return "en";
-        return "both";
-    }
-
-    private String getSelectedAudioSource() {
-        return binding.toggleAudioSource.getCheckedButtonId() == R.id.btnAudioMic
-            ? "mic" : "internal";
     }
 
     private void updateButtonState() {

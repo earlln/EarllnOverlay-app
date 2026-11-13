@@ -1,11 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.SubOverlay" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <style name="Theme.EarllnOverlay" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">#7C6AFF</item>
         <item name="colorPrimaryVariant">#5C6BC0</item>
         <item name="colorOnPrimary">#FFFFFF</item>
         <item name="colorSecondary">#FF6A9E</item>
         <item name="android:windowBackground">#0A0A0F</item>
         <item name="android:statusBarColor">#0A0A0F</item>
+    </style>
+
+    <!-- 자막 노트 패널 헤더 버튼 -->
+    <style name="NotePanelButton">
+        <item name="android:layout_width">36dp</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">false</item>
     </style>
 </resources>
