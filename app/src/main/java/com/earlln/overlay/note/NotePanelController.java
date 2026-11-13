@@ -433,7 +433,10 @@ public final class NotePanelController {
         panelLp = overlayParams(dp(300), dp(400));
 
         tvTitle.setOnTouchListener(new DragListener(panelRoot, panelLp, null, false));
+        panelRoot.findViewById(R.id.btnRefresh).setOnClickListener(v -> actions.onScreenTranslate());
         panelRoot.findViewById(R.id.btnCopyAll).setOnClickListener(v -> copyAll());
+        // 상태 줄도 잡고 끌어서 패널 이동 가능
+        tvPanelStatus.setOnTouchListener(new DragListener(panelRoot, panelLp, null, false));
         panelRoot.findViewById(R.id.btnShare).setOnClickListener(v -> shareAll());
         btnExpand.setOnClickListener(v -> toggleExpand());
         panelRoot.findViewById(R.id.btnHide).setOnClickListener(v -> hidePanel());
@@ -542,9 +545,9 @@ public final class NotePanelController {
     private void disarmQuit() {
         quitArmed = false;
         if (btnQuit == null) return;
-        btnQuit.setText("⏻");
+        btnQuit.setText("⏹");
         btnQuit.setTextSize(16);
-        btnQuit.getLayoutParams().width = dp(36);
+        btnQuit.getLayoutParams().width = dp(32);
         btnQuit.requestLayout();
     }
 
@@ -634,7 +637,8 @@ public final class NotePanelController {
 
     private void updateCounts() {
         if (tvTitle != null) {
-            tvTitle.setText(entries.isEmpty() ? "📝 자막 노트" : "📝 자막 노트 · " + entries.size());
+            // 헤더 버튼이 많아 제목은 짧게: 문장 수만 표시
+            tvTitle.setText(entries.isEmpty() ? "📝" : "📝 " + entries.size());
         }
         if (tvEmpty != null) tvEmpty.setVisibility(entries.isEmpty() ? View.VISIBLE : View.GONE);
     }
