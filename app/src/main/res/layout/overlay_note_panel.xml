@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 우측 반투명 자막 노트 패널 (배경색/투명도는 코드에서 설정) -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/panelRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+<LinearLayout
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical">
@@ -16,9 +20,10 @@
 
         <TextView
             android:id="@+id/tvPanelTitle"
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:layout_weight="1"
+            android:minWidth="48dp"
+            android:paddingEnd="6dp"
             android:gravity="center_vertical"
             android:paddingStart="12dp"
             android:singleLine="true"
@@ -27,6 +32,21 @@
             android:textColor="#FFFFFF"
             android:textSize="14sp"
             android:textStyle="bold"/>
+
+        <!-- 패널이 좁아지면 버튼 줄을 좌우로 밀어서 볼 수 있음 -->
+        <HorizontalScrollView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:fillViewport="true"
+            android:scrollbars="none"
+            android:overScrollMode="never">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="end|center_vertical">
 
         <TextView android:id="@+id/btnRefresh" style="@style/NotePanelButton" android:text="🔄"
             android:contentDescription="화면 다시 읽기"/>
@@ -45,6 +65,8 @@
         <TextView android:id="@+id/btnQuit" style="@style/NotePanelButton" android:text="⏹"
             android:textColor="#FF8A80"
             android:contentDescription="자막 종료"/>
+        </LinearLayout>
+        </HorizontalScrollView>
     </LinearLayout>
 
     <!-- 캡처 상태 + 소리 입력 여부 (원인 파악용, 항상 표시) -->
@@ -121,3 +143,18 @@
             android:textSize="14sp"/>
     </LinearLayout>
 </LinearLayout>
+
+    <!-- 크기 조절 손잡이: 끌어서 가로/세로 크기 변경 -->
+    <TextView
+        android:id="@+id/resizeHandle"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_gravity="bottom|end"
+        android:gravity="bottom|end"
+        android:paddingEnd="4dp"
+        android:paddingBottom="2dp"
+        android:text="◢"
+        android:textColor="#B3B8C0FF"
+        android:textSize="16sp"
+        android:contentDescription="크기 조절"/>
+</FrameLayout>

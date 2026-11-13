@@ -67,6 +67,9 @@ public final class NotePanelController {
     private RecyclerView rv;
     private WindowManager.LayoutParams panelLp;
     private boolean panelPositioned = false;
+    /** 사용자가 손잡이(◢)로 정한 크기 (px, 0 이면 기본 크기) — 위치와 함께 저장됨 */
+    private int customW = 0, customH = 0;
+    private final android.content.SharedPreferences geoPrefs;
 
     // 패널 상태 줄 (마지막 상태 안내 + 소리 입력 여부)
     private String lastStatus = "🔄 준비 중...";
@@ -131,6 +134,9 @@ public final class NotePanelController {
         this.handler = mainHandler;
         this.touchSlop = ViewConfiguration.get(ctx).getScaledTouchSlop();
         this.adapter = new NoteAdapter(entries, this::copyEntry);
+        this.geoPrefs = ctx.getSharedPreferences("panel_geometry", Context.MODE_PRIVATE);
+        customW = geoPrefs.getInt("w", 0);
+        customH = geoPrefs.getInt("h", 0);
     }
 
     // ── 공개 API ──────────────────────────────────────────────────────────────
@@ -344,7 +350,12 @@ public final class NotePanelController {
 
         applyPanelSize();
         if (!panelPositioned) {
-            placePanelDefault();
+            if (!expanded && geoPrefs.contains("x")) { // 지난번 위치 복원
+                panelLp.x = geoPrefs.getInt("x", 0);
+                panelLp.y = geoPrefs.getInt("y", 0);
+            } else {
+                placePanelDefault();
+            }
             panelPositioned = true;
         }
         clamp(panelRoot, panelLp);
@@ -402,6 +413,9 @@ public final class NotePanelController {
         if (expanded) {
             panelLp.x = (screenW() - panelLp.width) / 2;
             panelLp.y = (screenH() - panelLp.height) / 2;
+        } else if (geoPrefs.contains("x")) {
+            panelLp.x = geoPrefs.getInt("x", 0); // 확대 전 위치로 복귀
+            panelLp.y = geoPrefs.getInt("y", 0);
         } else {
             placePanelDefault();
         }
@@ -415,9 +429,67 @@ public final class NotePanelController {
         if (expanded) {
             panelLp.width = w - dp(16);
             panelLp.height = (int) (h * 0.85f);
+        } else if (customW > 0 && customH > 0) {
+            panelLp.width = clampInt(customW, minPanelW(), w);
+            panelLp.height = clampInt(customH, minPanelH(), h);
         } else {
             panelLp.width = Math.min(w - dp(16), Math.max((int) (w * 0.45f), dp(300)));
             panelLp.height = (int) (h * 0.6f);
+        }
+    }
+
+    private int minPanelW() { return dp(180); }
+    private int minPanelH() { return dp(150); }
+
+    private static int clampInt(int v, int min, int max) {
+        return Math.max(min, Math.min(v, Math.max(min, max)));
+    }
+
+    /** 패널 위치/크기 저장 (확대 상태의 크기는 저장하지 않음) */
+    private void saveGeometry() {
+        if (panelLp == null || expanded) return;
+        geoPrefs.edit()
+            .putInt("x", panelLp.x).putInt("y", panelLp.y)
+            .putInt("w", customW).putInt("h", customH)
+            .apply();
+    }
+
+    /** ◢ 손잡이: 끌어서 패널 크기 변경 */
+    private final class ResizeListener implements View.OnTouchListener {
+        private float downX, downY;
+        private int startW, startH;
+
+        @SuppressLint("ClickableViewAccessibility")
+        @Override
+        public boolean onTouch(View v, MotionEvent ev) {
+            switch (ev.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    downX = ev.getRawX();
+                    downY = ev.getRawY();
+                    startW = panelLp.width;
+                    startH = panelLp.height;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    int w = startW + (int) (ev.getRawX() - downX);
+                    int h = startH + (int) (ev.getRawY() - downY);
+                    // 화면 밖으로 넘어가지 않게 현재 위치 기준으로 제한
+                    panelLp.width = clampInt(w, minPanelW(), screenW() - panelLp.x);
+                    panelLp.height = clampInt(h, minPanelH(), screenH() - panelLp.y);
+                    safeUpdate(panelRoot, panelLp);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    customW = panelLp.width;
+                    customH = panelLp.height;
+                    if (expanded) { // 크게 보기 중에 조절하면 그 크기를 새 기본 크기로
+                        expanded = false;
+                        btnExpand.setText("⤢");
+                    }
+                    saveGeometry();
+                    return true;
+                default:
+                    return true;
+            }
         }
     }
 
@@ -459,6 +531,7 @@ public final class NotePanelController {
         panelLp = overlayParams(dp(300), dp(400));
 
         tvTitle.setOnTouchListener(new DragListener(panelRoot, panelLp, null, false));
+        panelRoot.findViewById(R.id.resizeHandle).setOnTouchListener(new ResizeListener());
         panelRoot.findViewById(R.id.btnRefresh).setOnClickListener(v -> actions.onScreenTranslate());
         panelRoot.findViewById(R.id.btnCopyAll).setOnClickListener(v -> copyAll());
         // 상태 줄도 잡고 끌어서 패널 이동 가능
@@ -826,6 +899,7 @@ public final class NotePanelController {
                     return true;
                 case MotionEvent.ACTION_UP:
                     if (!dragging && onClick != null) onClick.run();
+                    if (dragging && root == panelRoot) saveGeometry(); // 패널 위치 기억
                     return true;
                 default:
                     return true;
