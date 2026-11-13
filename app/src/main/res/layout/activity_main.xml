@@ -11,15 +11,35 @@
         android:orientation="vertical"
         android:padding="20dp">
 
-        <!-- 헤더 -->
-        <TextView
-            android:layout_width="wrap_content"
+        <!-- 헤더 + ⚙️ 설정 버튼 -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="EarllnOverlay"
-            android:textColor="#7C6AFF"
-            android:textSize="28sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="4dp"/>
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="4dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="EarllnOverlay"
+                android:textColor="#7C6AFF"
+                android:textSize="28sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:id="@+id/btnSettings"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:gravity="center"
+                android:text="⚙️"
+                android:textSize="22sp"
+                android:contentDescription="설정"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true"/>
+        </LinearLayout>
 
         <TextView
             android:layout_width="wrap_content"
@@ -58,224 +78,6 @@
                 android:paddingEnd="24dp"/>
         </LinearLayout>
 
-        <!-- 언어 선택 -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="노트 언어"
-            android:textColor="#AAAACC"
-            android:textSize="12sp"
-            android:layout_marginBottom="8dp"/>
-
-        <com.google.android.material.button.MaterialButtonToggleGroup
-            android:id="@+id/toggleLang"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:singleSelection="true"
-            app:selectionRequired="true"
-            android:layout_marginBottom="24dp">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnLangBoth"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="한 + EN"
-                android:textColor="@color/btn_lang_text"
-                app:backgroundTint="@color/btn_lang_bg"
-                app:strokeColor="#7C6AFF"
-                app:strokeWidth="1.5dp"
-                android:checked="true"/>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnLangKo"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="한국어"
-                android:textColor="@color/btn_lang_text"
-                app:backgroundTint="@color/btn_lang_bg"
-                app:strokeColor="#7C6AFF"
-                app:strokeWidth="1.5dp"/>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnLangEn"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="English"
-                android:textColor="@color/btn_lang_text"
-                app:backgroundTint="@color/btn_lang_bg"
-                app:strokeColor="#7C6AFF"
-                app:strokeWidth="1.5dp"/>
-        </com.google.android.material.button.MaterialButtonToggleGroup>
-
-        <!-- 오디오 소스 선택 -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="오디오 소스"
-            android:textColor="#AAAACC"
-            android:textSize="12sp"
-            android:layout_marginBottom="8dp"/>
-
-        <com.google.android.material.button.MaterialButtonToggleGroup
-            android:id="@+id/toggleAudioSource"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:singleSelection="true"
-            app:selectionRequired="true"
-            android:layout_marginBottom="8dp">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnAudioInternal"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="📱 내부 오디오"
-                android:textColor="@color/btn_lang_text"
-                app:backgroundTint="@color/btn_lang_bg"
-                app:strokeColor="#7C6AFF"
-                app:strokeWidth="1.5dp"
-                android:checked="true"/>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnAudioMic"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="🎤 마이크"
-                android:textColor="@color/btn_lang_text"
-                app:backgroundTint="@color/btn_lang_bg"
-                app:strokeColor="#7C6AFF"
-                app:strokeWidth="1.5dp"/>
-
-        </com.google.android.material.button.MaterialButtonToggleGroup>
-
-        <TextView
-            android:id="@+id/tvAudioSourceDesc"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="폰 내부 소리만 인식 (볼륨 0도 가능)"
-            android:textColor="#5555AA"
-            android:textSize="11sp"
-            android:layout_marginBottom="20dp"/>
-
-        <!-- STT 모델 선택 -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="음성 인식 모델"
-            android:textColor="#AAAACC"
-            android:textSize="12sp"
-            android:layout_marginBottom="8dp"/>
-
-        <com.google.android.material.button.MaterialButtonToggleGroup
-            android:id="@+id/toggleSttModel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:singleSelection="true"
-            app:selectionRequired="true"
-            android:layout_marginBottom="8dp">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnModelSmall"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="⚡ 빠름"
-                android:textColor="@color/btn_lang_text"
-                app:backgroundTint="@color/btn_lang_bg"
-                app:strokeColor="#7C6AFF"
-                app:strokeWidth="1.5dp"
-                android:checked="true"/>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnModelLarge"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="🎯 정확"
-                android:textColor="@color/btn_lang_text"
-                app:backgroundTint="@color/btn_lang_bg"
-                app:strokeColor="#7C6AFF"
-                app:strokeWidth="1.5dp"/>
-
-        </com.google.android.material.button.MaterialButtonToggleGroup>
-
-        <TextView
-            android:id="@+id/tvSttModelDesc"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/stt_model_small_desc"
-            android:textColor="#5555AA"
-            android:textSize="11sp"
-            android:layout_marginBottom="20dp"/>
-
-        <!-- 하단 자막 표시 -->
-        <com.google.android.material.switchmaterial.SwitchMaterial
-            android:id="@+id/switchBottomSubtitle"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:checked="true"
-            android:text="하단 자막 표시"
-            android:textColor="#AAAACC"
-            android:textSize="13sp"
-            app:thumbTint="#7C6AFF"/>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="화면 아래에 실시간 자막을 표시합니다. 📝 패널이 열려 있을 때는 자동으로 숨겨집니다."
-            android:textColor="#5555AA"
-            android:textSize="11sp"
-            android:layout_marginBottom="20dp"/>
-
-        <!-- 글자 크기 -->
-        <TextView
-            android:id="@+id/tvFontSizeLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="글자 크기: 18sp"
-            android:textColor="#AAAACC"
-            android:textSize="12sp"
-            android:layout_marginBottom="8dp"/>
-
-        <com.google.android.material.slider.Slider
-            android:id="@+id/sliderFontSize"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:valueFrom="12"
-            android:valueTo="28"
-            android:value="18"
-            android:stepSize="1"
-            app:thumbColor="#7C6AFF"
-            app:trackColorActive="#7C6AFF"
-            app:trackColorInactive="#2A2A3A"
-            android:layout_marginBottom="20dp"/>
-
-        <!-- 배경 투명도 -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="패널 배경 불투명도"
-            android:textColor="#AAAACC"
-            android:textSize="12sp"
-            android:layout_marginBottom="8dp"/>
-
-        <com.google.android.material.slider.Slider
-            android:id="@+id/sliderBgAlpha"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:valueFrom="0"
-            android:valueTo="255"
-            android:value="180"
-            android:stepSize="5"
-            app:thumbColor="#FF6A9E"
-            app:trackColorActive="#FF6A9E"
-            app:trackColorInactive="#2A2A3A"
-            android:layout_marginBottom="28dp"/>
-
         <!-- 사용 안내 -->
         <TextView
             android:layout_width="match_parent"
@@ -289,7 +91,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="1. ▶ 자막 시작 버튼 탭 → 권한 요청 시 모두 허용\n2. 화면 위에 📝 자막 노트 버튼이 나타납니다\n3. 다른 앱(X, 브라우저 등)에서 영상 재생\n4. 📝 버튼을 누르면 우측 패널에 문장과 번역이 차곡차곡 쌓입니다\n\n· 패널 상단 바를 드래그하면 이동\n· 📋 전체 복사 · 📤 공유 · ⤢ 크게 · — 숨기기 · ✕ 닫기\n· 문장을 길게 누르면 그 문장만 복사\n· 패널 위 노란 줄: 🔊 소리 감지 여부와 현재 상태 표시\n· 영상 앱이 내부 오디오를 막으면 🎤 마이크로 자동 전환 (볼륨을 켜 두세요)\n· 패널을 닫아도 기록은 유지되며, 자막을 중지하면 삭제됩니다\n\n⚠ 첫 실행 시 모델 다운로드 필요 (Wi-Fi 권장)\n   · 음성 인식: 빠름 약 40MB / 정확 약 128MB\n   · 번역: 약 30MB\n⚠ 화면 공유 권한은 내부 오디오 캡처에 사용됩니다"
+            android:text="1. ▶ 자막 시작 버튼 탭 → 권한 요청 시 모두 허용\n2. 화면 위에 📝 자막 노트 버튼이 나타납니다\n3. 다른 앱(X, 브라우저 등)에서 영상 재생\n4. 📝 버튼을 누르면 우측 패널에 문장과 번역이 차곡차곡 쌓입니다\n\n· 패널 상단 바를 드래그하면 이동\n· 📋 전체 복사 · 📤 공유 · ⤢ 크게 · — 숨기기 · ✕ 닫기\n· 문장을 길게 누르면 그 문장만 복사\n· 패널 위 노란 줄: 🔊 소리 감지 여부와 현재 상태 표시\n· 언어/오디오/글자 크기 등은 오른쪽 위 ⚙️ 설정에서 변경\n· 영상 앱이 내부 오디오를 막으면 🎤 마이크로 자동 전환 (볼륨을 켜 두세요)\n· 패널을 닫아도 기록은 유지되며, 자막을 중지하면 삭제됩니다\n\n⚠ 첫 실행 시 모델 다운로드 필요 (Wi-Fi 권장)\n   · 음성 인식: 빠름 약 40MB / 정확 약 128MB\n   · 번역: 약 30MB\n⚠ 화면 공유 권한은 내부 오디오 캡처에 사용됩니다"
             android:textColor="#6666AA"
             android:textSize="13sp"
             android:lineSpacingExtra="4dp"/>

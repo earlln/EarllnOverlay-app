@@ -27,6 +27,12 @@
             </intent-filter>
         </activity>
 
+        <!-- 설정 화면 -->
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity"/>
+
         <!-- 오버레이 자막 서비스 (포그라운드) -->
         <service
             android:name=".service.SubtitleOverlayService"
