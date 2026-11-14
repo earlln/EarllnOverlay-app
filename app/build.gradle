@@ -11,12 +11,29 @@ android {
         minSdk 26
         targetSdk 34
         // 빌드 번호 = GitHub Actions 실행 번호 (로컬 빌드는 1)
-        versionCode((System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger())
+        // 릴리즈 워크플로는 VERSION_CODE 를 직접 넘깁니다 (디버그 빌드 번호보다 항상 크게)
+        versionCode((System.getenv("VERSION_CODE") ?: System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger())
+        // 릴리즈 태그는 v + 이 값입니다 (예: v1.1.0)
         versionName "1.1.0"
+    }
+
+    // 공개 배포용 고정 서명 — 키가 바뀌면 사용자가 앱을 지우고 다시 깔아야 하므로 항상 같은 키를 씁니다.
+    // 키 파일과 비밀번호는 저장소에 두지 않고 GitHub Secrets 로만 받습니다 (.github/workflows/release.yml).
+    def releaseKeystore = System.getenv("RELEASE_KEYSTORE_FILE")
+    signingConfigs {
+        if (releaseKeystore && file(releaseKeystore).exists()) {
+            release {
+                storeFile file(releaseKeystore)
+                storePassword System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
+            signingConfig signingConfigs.findByName("release")
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
