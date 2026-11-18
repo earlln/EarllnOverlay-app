@@ -153,6 +153,12 @@ public class SubtitleOverlayService extends Service {
     /** 이미 노트에 추가한 화면 문장 (같은 화면을 다시 눌러도 중복 추가 안 함) */
     private final java.util.LinkedHashSet<String> screenSeen = new java.util.LinkedHashSet<>();
     private static final int MAX_SCREEN_SEEN = 300;
+    /** 최근 추가한 화면 문장 키 (부분 문장 중복 판단용) */
+    private final java.util.ArrayDeque<String> recentScreenKeys = new java.util.ArrayDeque<>();
+    /** 🔁 자동 화면 번역 */
+    private static final long AUTO_SCREEN_INTERVAL_MS = 3000;
+    private boolean autoScreen = false;
+    private boolean autoScreenAfterGrant = false;
 
     // ── 번역 (main) ──
     private TranslationEngine translationEngine;
@@ -174,8 +180,10 @@ public class SubtitleOverlayService extends Service {
             @Override public void onQuit() { stopSelf(); }
             @Override public void onScreenTranslate() { translateScreen(); }
             @Override public void onTogglePause() { togglePause(); }
+            @Override public void onToggleAutoScreen() { toggleAutoScreen(); }
             @Override public void onCleared() {
                 screenSeen.clear(); // 같은 화면을 다시 읽으면 다시 추가되도록
+                recentScreenKeys.clear();
                 setStatus("🗑 기록을 지웠습니다");
             }
         });
@@ -201,6 +209,7 @@ public class SubtitleOverlayService extends Service {
         if (intent != null && ACTION_PROJECTION_DENIED.equals(intent.getAction())) {
             awaitingProjection = false;
             screenTranslateAfterGrant = false;
+            autoScreenAfterGrant = false;
             setStatus("⚠️ 화면 공유가 허용되지 않아 화면 번역을 할 수 없습니다");
             return START_NOT_STICKY;
         }
@@ -233,7 +242,11 @@ public class SubtitleOverlayService extends Service {
                 if (pipelineStarted) runOnControl(() -> restartCapture(captureSession));
             }
             awaitingProjection = false;
-            if (newProjection != null && screenTranslateAfterGrant) {
+            if (newProjection != null && autoScreenAfterGrant) {
+                autoScreenAfterGrant = false;
+                screenTranslateAfterGrant = false;
+                mainHandler.postDelayed(this::startAutoScreen, 600);
+            } else if (newProjection != null && screenTranslateAfterGrant) {
                 screenTranslateAfterGrant = false;
                 setStatus("✅ 화면 공유가 다시 허용되었습니다");
                 // 허용 창이 완전히 사라진 뒤 캡처
@@ -833,6 +846,7 @@ public class SubtitleOverlayService extends Service {
 
     // ── 화면 글자 번역 (main) ─────────────────────────────────────────────────
 
+    /** 📷 한 번 번역: 오버레이를 잠깐 숨기고 화면 전체를 읽는다 */
     private void translateScreen() {
         if (destroyed || screenCapturer.isBusy()) return;
         if (mediaProjection == null) {
@@ -845,10 +859,12 @@ public class SubtitleOverlayService extends Service {
         mainHandler.postDelayed(() -> {
             if (destroyed) return;
             screenCapturer.capture(new ScreenTextCapturer.Callback() {
-                @Override public void onResult(java.util.List<String> blocks) {
+                @Override public void onResult(java.util.List<ScreenTextCapturer.Block> blocks) {
                     if (destroyed) return;
                     notePanel.setCaptureHidden(false);
-                    addScreenSentences(blocks);
+                    java.util.List<String> texts = new java.util.ArrayList<>();
+                    for (ScreenTextCapturer.Block b : blocks) texts.add(b.text);
+                    addScreenSentences(texts, false);
                 }
                 @Override public void onError(String message) {
                     if (destroyed) return;
@@ -859,11 +875,82 @@ public class SubtitleOverlayService extends Service {
         }, 200);
     }
 
+    // ── 🔁 자동 화면 번역 (main) ─────────────────────────────────────────────
+
+    private void toggleAutoScreen() {
+        if (destroyed) return;
+        if (autoScreen) {
+            stopAutoScreen("🔁 자동 화면 번역을 껐습니다");
+            return;
+        }
+        if (mediaProjection == null) {
+            autoScreenAfterGrant = true; // 허용되면 자동 모드로 시작
+            requestProjectionAgain();
+            return;
+        }
+        startAutoScreen();
+    }
+
+    private void startAutoScreen() {
+        autoScreen = true;
+        notePanel.setAutoScreen(true);
+        notePanel.showPanel();
+        setStatus("🔁 자동 화면 번역 켜짐 · " + (AUTO_SCREEN_INTERVAL_MS / 1000) + "초마다 새 문장만 추가합니다"
+            + "\n(📝 패널·버튼 아래에 가려진 글자는 읽지 않습니다)");
+        mainHandler.removeCallbacks(autoScreenTick);
+        mainHandler.postDelayed(autoScreenTick, 500);
+    }
+
+    private void stopAutoScreen(String msg) {
+        autoScreen = false;
+        mainHandler.removeCallbacks(autoScreenTick);
+        notePanel.setAutoScreen(false);
+        if (msg != null) setStatus(msg);
+    }
+
+    private final Runnable autoScreenTick = new Runnable() {
+        @Override public void run() {
+            if (!autoScreen || destroyed) return;
+            if (mediaProjection == null) {
+                stopAutoScreen("⚠️ 화면 공유가 끝나 자동 화면 번역을 껐습니다\n🔁 를 누르면 다시 허용할 수 있습니다");
+                return;
+            }
+            // ⏸ 일시정지 중에는 자동 화면 번역도 쉼 (켜짐 상태는 유지)
+            if (!paused && !screenCapturer.isBusy()) captureScreenAuto();
+            mainHandler.postDelayed(this, AUTO_SCREEN_INTERVAL_MS);
+        }
+    };
+
+    /** 자동 모드: 깜빡임이 없도록 오버레이는 숨기지 않고, 오버레이 영역의 글자만 제외 */
+    private void captureScreenAuto() {
+        final java.util.List<android.graphics.Rect> exclude = notePanel.getOverlayScreenRects();
+        screenCapturer.capture(new ScreenTextCapturer.Callback() {
+            @Override public void onResult(java.util.List<ScreenTextCapturer.Block> blocks) {
+                if (destroyed || !autoScreen) return;
+                java.util.List<String> texts = new java.util.ArrayList<>();
+                for (ScreenTextCapturer.Block b : blocks) {
+                    if (b.box != null && insideAny(b.box, exclude)) continue; // 우리 패널/버튼 위 글자
+                    texts.add(b.text);
+                }
+                addScreenSentences(texts, true);
+            }
+            @Override public void onError(String message) {
+                Log.w(TAG, "자동 화면 번역 실패: " + message); // 다음 주기에 다시 시도
+            }
+        });
+    }
+
+    private static boolean insideAny(android.graphics.Rect box, java.util.List<android.graphics.Rect> rects) {
+        int cx = box.centerX(), cy = box.centerY();
+        for (android.graphics.Rect r : rects) if (r.contains(cx, cy)) return true;
+        return false;
+    }
+
     /** 화면 공유가 끝난 상태 → 앱 재시작 없이 그 자리에서 '화면 공유 허용' 창을 띄움 */
     private void requestProjectionAgain() {
         if (awaitingProjection) return;
         awaitingProjection = true;
-        screenTranslateAfterGrant = true;
+        if (!autoScreenAfterGrant) screenTranslateAfterGrant = true;
         setStatus("📷 화면 공유를 다시 허용해 주세요");
         try {
             startActivity(new Intent(this, com.earlln.overlay.ui.ProjectionRequestActivity.class)
@@ -876,17 +963,26 @@ public class SubtitleOverlayService extends Service {
         }
     }
 
-    private void addScreenSentences(java.util.List<String> blocks) {
+    /** 화면에서 읽은 글자 → 새 영어 문장만 노트에 추가하고 번역 */
+    private void addScreenSentences(java.util.List<String> blocks, boolean auto) {
         java.util.List<String> sentences = ScreenTextFilter.sentences(blocks);
         int added = 0;
         for (String s : sentences) {
-            if (!screenSeen.add(s)) continue; // 이미 추가한 문장
-            if (screenSeen.size() > MAX_SCREEN_SEEN) {
-                screenSeen.remove(screenSeen.iterator().next());
-            }
+            String key = ScreenTextFilter.key(s);
+            if (key.isEmpty() || screenSeen.contains(key)) continue;          // 이미 추가한 문장
+            if (ScreenTextFilter.isContainedIn(key, recentScreenKeys)) continue; // 최근 문장의 일부
+            screenSeen.add(key);
+            if (screenSeen.size() > MAX_SCREEN_SEEN) screenSeen.remove(screenSeen.iterator().next());
+            recentScreenKeys.addLast(key);
+            if (recentScreenKeys.size() > 30) recentScreenKeys.removeFirst();
+
             NoteEntry entry = notePanel.addEntry(s, true);
             if (!"en".equals(langMode)) requestTranslation(entry);
             added++;
+        }
+        if (auto) {
+            if (added > 0) setStatus("🔁 화면에서 새 문장 " + added + "개를 추가했습니다");
+            return; // 자동 모드는 새 문장이 없으면 조용히
         }
         if (added > 0) {
             setStatus("📷 화면에서 " + added + "문장을 번역합니다");

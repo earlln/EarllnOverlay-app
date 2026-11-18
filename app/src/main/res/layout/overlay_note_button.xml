@@ -61,6 +61,24 @@
         android:textSize="14sp"
         android:textStyle="bold"
         android:elevation="4dp"/>
+
+    <!-- 🔁 자동 화면 번역 켜기/끄기 (켜면 3초마다 새 문장만 추가) -->
+    <TextView
+        android:id="@+id/btnAuto"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:background="@drawable/bg_note_button"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:text="🔁"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:contentDescription="자동 화면 번역"
+        android:elevation="4dp"/>
     </LinearLayout>
 
     <TextView

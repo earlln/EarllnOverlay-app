@@ -35,8 +35,15 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 final class ScreenTextCapturer {
 
+    /** 인식된 글자 덩어리 1개 + 실제 화면 좌표상의 위치 */
+    static final class Block {
+        final String text;
+        final android.graphics.Rect box; // null 가능
+        Block(String text, android.graphics.Rect box) { this.text = text; this.box = box; }
+    }
+
     interface Callback {
-        void onResult(List<String> textBlocks);
+        void onResult(List<Block> blocks);
         void onError(String message);
     }
 
@@ -56,6 +63,8 @@ final class ScreenTextCapturer {
     private VirtualDisplay display;
     private ImageReader reader;
     private int width, height, dpi;
+    /** 캡처 이미지 좌표 → 실제 화면 좌표 배율 (큰 화면은 축소해서 캡처하므로) */
+    private float toScreenScale = 1f;
 
     private final AtomicReference<Callback> pending = new AtomicReference<>();
     private boolean busy = false;
@@ -143,6 +152,7 @@ final class ScreenTextCapturer {
             width = w;
             height = h;
             dpi = dm.densityDpi;
+            toScreenScale = dm.widthPixels / (float) width;
             reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
             reader.setOnImageAvailableListener(this::onImageAvailable, bg);
         }
@@ -200,8 +210,16 @@ final class ScreenTextCapturer {
         if (released) { bmp.recycle(); return; }
         recognizer.process(InputImage.fromBitmap(bmp, 0))
             .addOnSuccessListener(text -> {
-                List<String> blocks = new ArrayList<>();
-                for (Text.TextBlock b : text.getTextBlocks()) blocks.add(b.getText());
+                List<Block> blocks = new ArrayList<>();
+                for (Text.TextBlock b : text.getTextBlocks()) {
+                    android.graphics.Rect r = b.getBoundingBox();
+                    if (r != null && toScreenScale != 1f) {
+                        r = new android.graphics.Rect(
+                            Math.round(r.left * toScreenScale), Math.round(r.top * toScreenScale),
+                            Math.round(r.right * toScreenScale), Math.round(r.bottom * toScreenScale));
+                    }
+                    blocks.add(new Block(b.getText(), r));
+                }
                 finish();
                 bmp.recycle();
                 if (!released) cb.onResult(blocks);

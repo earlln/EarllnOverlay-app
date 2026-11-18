@@ -33,6 +33,26 @@ public final class ScreenTextFilter {
         return new ArrayList<>(out);
     }
 
+    /** 중복 비교용 키: 대소문자/구두점/공백 무시 (OCR 은 쉼표·마침표가 자주 흔들림) */
+    public static String key(String s) {
+        if (s == null) return "";
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = Character.toLowerCase(s.charAt(i));
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    /** 최근 문장 중 하나에 이미 통째로 들어 있는 문장이면 중복으로 본다 */
+    public static boolean isContainedIn(String key, Iterable<String> recentKeys) {
+        if (key.length() < 8) return false; // 너무 짧은 문장은 우연히 포함될 수 있어 제외
+        for (String r : recentKeys) {
+            if (r.length() > key.length() && r.contains(key)) return true;
+        }
+        return false;
+    }
+
     /** 줄바꿈으로 끊긴 단어("exam-\nple")를 잇고 공백을 정리 */
     static String normalize(String block) {
         if (block == null) return "";

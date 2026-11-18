@@ -108,10 +108,13 @@ public final class NotePanelController {
         void onTogglePause();
         /** 🗑 기록을 모두 지운 직후 */
         void onCleared();
+        /** 🔁 자동 화면 번역 켜기/끄기 */
+        void onToggleAutoScreen();
     }
 
     private final Actions actions;
     private TextView btnPause;
+    private TextView btnAuto;
 
     // ⏻ 종료 (두 번 눌러야 종료 → 실수로 기록이 지워지는 것 방지)
     private TextView btnQuit;
@@ -159,6 +162,9 @@ public final class NotePanelController {
             btnPause = buttonRoot.findViewById(R.id.btnPause);
             btnPause.setOnTouchListener(
                 new DragListener(buttonRoot, buttonLp, actions::onTogglePause, false));
+            btnAuto = buttonRoot.findViewById(R.id.btnAuto);
+            btnAuto.setOnTouchListener(
+                new DragListener(buttonRoot, buttonLp, actions::onToggleAutoScreen, false));
             buttonRoot.findViewById(R.id.btnScreen).setOnTouchListener(
                 new DragListener(buttonRoot, buttonLp, actions::onScreenTranslate, false));
             wm.addView(buttonRoot, buttonLp);
@@ -280,6 +286,26 @@ public final class NotePanelController {
         hasSound = null; // 멈춘 동안에는 소리 표시 없음
         updatePanelStatus();
         if (paused) clearBar();
+    }
+
+    /** 🔁 자동 화면 번역 상태 표시 */
+    public void setAutoScreen(boolean on) {
+        if (btnAuto == null) return;
+        btnAuto.setText(on ? "🔁 자동 ON" : "🔁");
+        btnAuto.setContentDescription(on ? "자동 화면 번역 끄기" : "자동 화면 번역 켜기");
+        btnAuto.setBackgroundResource(on ? R.drawable.bg_note_button_auto : R.drawable.bg_note_button);
+    }
+
+    /** 우리 오버레이(버튼·패널·탭·하단 자막)가 차지한 화면 영역 — 자동 화면 번역에서 이 안의 글자는 무시 */
+    public List<android.graphics.Rect> getOverlayScreenRects() {
+        List<android.graphics.Rect> rects = new ArrayList<>();
+        for (View v : new View[] {buttonRoot, panelRoot, tabView, barView}) {
+            if (v == null || !v.isAttachedToWindow() || v.getVisibility() != View.VISIBLE) continue;
+            int[] loc = new int[2];
+            v.getLocationOnScreen(loc);
+            rects.add(new android.graphics.Rect(loc[0], loc[1], loc[0] + v.getWidth(), loc[1] + v.getHeight()));
+        }
+        return rects;
     }
 
     /** 패널이 닫혀 있거나 접혀 있으면 연다 */
