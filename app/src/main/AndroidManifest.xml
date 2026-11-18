@@ -33,6 +33,14 @@
             android:exported="false"
             android:parentActivityName=".ui.MainActivity"/>
 
+        <!-- 화면 공유 재허용용 투명 화면 (자막 실행 중 📷 를 눌렀을 때) -->
+        <activity
+            android:name=".ui.ProjectionRequestActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
+
         <!-- 오버레이 자막 서비스 (포그라운드) -->
         <service
             android:name=".service.SubtitleOverlayService"

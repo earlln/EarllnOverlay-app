@@ -59,6 +59,8 @@ public class SubtitleOverlayService extends Service {
     public static final String ACTION_STOP = "com.earlln.overlay.STOP";
     /** 알림의 '일시정지/재개' 버튼 */
     public static final String ACTION_TOGGLE_PAUSE = "com.earlln.overlay.TOGGLE_PAUSE";
+    /** 화면 공유 재허용 창에서 사용자가 거부/취소함 */
+    public static final String ACTION_PROJECTION_DENIED = "com.earlln.overlay.PROJECTION_DENIED";
     public static final String EXTRA_PROJECTION_RESULT_CODE = "projectionResultCode";
     public static final String EXTRA_PROJECTION_DATA = "projectionData";
 
@@ -122,16 +124,21 @@ public class SubtitleOverlayService extends Service {
     /** 재생 앱이 내부 오디오 캡처를 막은 것으로 판단됨 → 마이크 사용 (소스 변경/새 권한 시 초기화) */
     private volatile boolean internalBlocked = false;
     private AudioManager audioManager;
+    /** 화면 공유 재허용 창을 띄운 상태 (중복으로 띄우지 않기 위함) */
+    private boolean awaitingProjection = false;
+    /** 재허용되면 바로 화면 번역을 이어서 실행 */
+    private boolean screenTranslateAfterGrant = false;
     private final MediaProjection.Callback projectionCallback = new MediaProjection.Callback() {
         @Override
         public void onStop() {
-            Log.w(TAG, "MediaProjection 종료됨 (사용자가 화면 공유를 중지)");
+            Log.w(TAG, "MediaProjection 종료됨 (화면 잠금/사용자 중지 등)");
             mediaProjection = null;
             screenCapturer.setProjection(null);
             if (!"mic".equals(audioSource)) {
-                setStatus("⚠️ 화면 공유가 중지되어 마이크로 전환합니다");
                 runOnControl(() -> restartCapture(captureSession));
             }
+            setStatus("⚠️ 화면 공유가 끝났습니다 · 📷 를 누르면 다시 허용할 수 있습니다\n"
+                + "(그동안 음성은 마이크로 인식 · 볼륨을 켜 두세요)");
         }
     };
 
@@ -191,6 +198,12 @@ public class SubtitleOverlayService extends Service {
             stopSelf(); // 알림의 '종료' 버튼
             return START_NOT_STICKY;
         }
+        if (intent != null && ACTION_PROJECTION_DENIED.equals(intent.getAction())) {
+            awaitingProjection = false;
+            screenTranslateAfterGrant = false;
+            setStatus("⚠️ 화면 공유가 허용되지 않아 화면 번역을 할 수 없습니다");
+            return START_NOT_STICKY;
+        }
         if (intent != null && ACTION_TOGGLE_PAUSE.equals(intent.getAction())) {
             if (pipelineStarted) togglePause(); // 알림의 '일시정지/재개' 버튼
             return START_NOT_STICKY;
@@ -218,6 +231,13 @@ public class SubtitleOverlayService extends Service {
                     catch (Exception ignored) {}
                 }
                 if (pipelineStarted) runOnControl(() -> restartCapture(captureSession));
+            }
+            awaitingProjection = false;
+            if (newProjection != null && screenTranslateAfterGrant) {
+                screenTranslateAfterGrant = false;
+                setStatus("✅ 화면 공유가 다시 허용되었습니다");
+                // 허용 창이 완전히 사라진 뒤 캡처
+                mainHandler.postDelayed(this::translateScreen, 600);
             }
         }
 
@@ -816,7 +836,7 @@ public class SubtitleOverlayService extends Service {
     private void translateScreen() {
         if (destroyed || screenCapturer.isBusy()) return;
         if (mediaProjection == null) {
-            setStatus("⚠️ 화면 공유 권한이 없어 화면 번역을 할 수 없습니다\n자막을 종료 후 다시 시작해 주세요");
+            requestProjectionAgain();
             return;
         }
         setStatus("📷 화면 글자 읽는 중...");
@@ -837,6 +857,23 @@ public class SubtitleOverlayService extends Service {
                 }
             });
         }, 200);
+    }
+
+    /** 화면 공유가 끝난 상태 → 앱 재시작 없이 그 자리에서 '화면 공유 허용' 창을 띄움 */
+    private void requestProjectionAgain() {
+        if (awaitingProjection) return;
+        awaitingProjection = true;
+        screenTranslateAfterGrant = true;
+        setStatus("📷 화면 공유를 다시 허용해 주세요");
+        try {
+            startActivity(new Intent(this, com.earlln.overlay.ui.ProjectionRequestActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
+        } catch (Exception e) {
+            Log.e(TAG, "화면 공유 재허용 창 실행 실패", e);
+            awaitingProjection = false;
+            screenTranslateAfterGrant = false;
+            setStatus("⚠️ 화면 공유 창을 열 수 없습니다\n자막을 종료 후 다시 시작해 주세요");
+        }
     }
 
     private void addScreenSentences(java.util.List<String> blocks) {
