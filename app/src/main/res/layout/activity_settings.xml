@@ -146,6 +146,110 @@
                 android:lineSpacingExtra="2dp"/>
         </LinearLayout>
 
+        <!-- 번역 엔진 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="번역 엔진"
+            android:textColor="#AAAACC"
+            android:textSize="12sp"
+            android:layout_marginBottom="8dp"/>
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/toggleTranslateEngine"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:singleSelection="true"
+            app:selectionRequired="true"
+            android:layout_marginBottom="8dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnTransLlm"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/btn_lang_text"
+                app:backgroundTint="@color/btn_lang_bg"
+                app:strokeColor="#7C6AFF"
+                app:strokeWidth="1.5dp"
+                android:text="✨ AI 번역 (Claude)"
+                android:checked="true"/>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnTransBasic"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/btn_lang_text"
+                app:backgroundTint="@color/btn_lang_bg"
+                app:strokeColor="#7C6AFF"
+                app:strokeWidth="1.5dp"
+                android:text="📴 기본 번역"/>
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <TextView
+            android:id="@+id/tvTranslateEngineDesc"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#5555AA"
+            android:textSize="11sp"
+            android:layout_marginBottom="10dp"/>
+
+        <!-- Claude API 키 (AI 번역일 때만 표시) -->
+        <LinearLayout
+            android:id="@+id/groupAnthropicKey"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginBottom="20dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <EditText
+                    android:id="@+id/etAnthropicKey"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="Claude API 키 붙여넣기 (sk-ant-...)"
+                    android:inputType="textPassword"
+                    android:importantForAutofill="no"
+                    android:singleLine="true"
+                    android:textColor="#FFFFFF"
+                    android:textColorHint="#555577"
+                    android:textSize="14sp"/>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnSaveAnthropicKey"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="저장"
+                    android:textColor="#FFFFFF"
+                    app:backgroundTint="#5C6BC0"/>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvAnthropicKeyStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#9999BB"
+                android:textSize="12sp"
+                android:layout_marginTop="4dp"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="키 발급: console.anthropic.com 가입 → 결제 수단/크레딧 등록 → API Keys → Create Key\n· 확정된 문장만 앞 문장 4개와 함께 보내 번역합니다 (모델: Claude Opus 5.5)\n· 먼저 기본 번역이 보이고, AI 번역이 오면 ✨ 표시와 함께 바뀝니다\n· 키는 이 휴대폰에만 저장되며 백업되지 않습니다 · 사용량만큼 요금이 부과됩니다"
+                android:textColor="#5555AA"
+                android:textSize="11sp"
+                android:lineSpacingExtra="2dp"/>
+        </LinearLayout>
+
         <!-- 언어 선택 -->
         <TextView
             android:layout_width="wrap_content"

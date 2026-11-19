@@ -17,6 +17,7 @@ final class AppSettings {
     String audioSource = "internal"; // internal | mic
     String sttModel = "small";       // small | large
     String sttEngine = "online";     // online(Deepgram) | offline(Vosk)
+    String translateEngine = "llm";  // llm(Claude) | basic(기기 번역)
     boolean bottomSubtitle = true;
 
     static AppSettings load(Context ctx) {
@@ -29,6 +30,7 @@ final class AppSettings {
         s.audioSource = p.getString("audioSource", "internal");
         s.sttModel = p.getString("sttModel", "small");
         s.sttEngine = p.getString("sttEngine", "online");
+        s.translateEngine = p.getString("translateEngine", "llm");
         s.bottomSubtitle = p.getBoolean("bottomSubtitle", true);
         return s;
     }
@@ -41,6 +43,7 @@ final class AppSettings {
             .putString("audioSource", audioSource)
             .putString("sttModel", sttModel)
             .putString("sttEngine", sttEngine)
+            .putString("translateEngine", translateEngine)
             .putBoolean("bottomSubtitle", bottomSubtitle)
             .apply();
     }
@@ -52,6 +55,7 @@ final class AppSettings {
         intent.putExtra("audioSource", audioSource);
         intent.putExtra("sttModel", sttModel);
         intent.putExtra("sttEngine", sttEngine);
+        intent.putExtra("translateEngine", translateEngine);
         intent.putExtra("bottomSubtitle", bottomSubtitle);
     }
 
@@ -62,12 +66,26 @@ final class AppSettings {
 
     /** keyChanged=true 면 서비스가 새 API 키로 온라인 인식을 다시 연결 */
     void broadcastIfRunning(Context ctx, boolean keyChanged) {
+        broadcastIfRunning(ctx, keyChanged ? "sttKeyChanged" : null);
+    }
+
+    /** flagExtra: "sttKeyChanged"(Deepgram 키) / "llmKeyChanged"(Claude 키) / null */
+    void broadcastIfRunning(Context ctx, String flagExtra) {
         if (!SubtitleOverlayService.isRunning) return;
         Intent intent = new Intent(SubtitleOverlayService.ACTION_UPDATE_SETTINGS);
         intent.setPackage(ctx.getPackageName()); // 앱 내부로만 전달
         putExtras(intent);
-        intent.putExtra("sttKeyChanged", keyChanged);
+        if (flagExtra != null) intent.putExtra(flagExtra, true);
         ctx.sendBroadcast(intent);
+    }
+
+    static String anthropicKey(Context ctx) {
+        return ctx.getSharedPreferences(SECRETS, Context.MODE_PRIVATE).getString("anthropic_key", "").trim();
+    }
+
+    static void saveAnthropicKey(Context ctx, String key) {
+        ctx.getSharedPreferences(SECRETS, Context.MODE_PRIVATE).edit()
+            .putString("anthropic_key", key == null ? "" : key.trim()).apply();
     }
 
     // ── Deepgram API 키 (백업에서 제외되는 별도 저장소) ──

@@ -170,6 +170,12 @@ public class SubtitleOverlayService extends Service {
 
     // ── 번역 (main) ──
     private TranslationEngine translationEngine;
+    /** ✨ AI 번역 (Claude) — 확정 문장의 기기 번역을 문맥 반영 번역으로 교체 */
+    private LlmTranslator llmTranslator;
+    /** 번역 엔진: "llm"(Claude) | "basic"(기기 번역만) */
+    private volatile String translateEngine = "llm";
+    /** AI 번역에 함께 보낼 직전 문장 수 */
+    private static final int LLM_CONTEXT_LINES = 4;
 
     private final BroadcastReceiver settingsReceiver = new BroadcastReceiver() {
         @Override
@@ -200,6 +206,7 @@ public class SubtitleOverlayService extends Service {
         createNotificationChannel();
         registerReceiver(settingsReceiver,
             new IntentFilter(ACTION_UPDATE_SETTINGS), Context.RECEIVER_NOT_EXPORTED);
+        llmTranslator = new LlmTranslator(mainHandler, this::setStatus);
         translationEngine = new TranslationEngine(mainHandler, new TranslationEngine.Listener() {
             @Override public void onPartialTranslated(String ko) {
                 if (!destroyed && !"en".equals(langMode)) notePanel.setLiveKo(ko);
@@ -305,6 +312,7 @@ public class SubtitleOverlayService extends Service {
         }
         if (screenCapturer != null) screenCapturer.release();
         if (translationEngine != null) translationEngine.close();
+        if (llmTranslator != null) llmTranslator.close();
         if (notePanel != null) notePanel.destroy(); // 기록도 함께 삭제됨
         try { unregisterReceiver(settingsReceiver); } catch (Exception ignored) {}
         super.onDestroy();
@@ -393,6 +401,12 @@ public class SubtitleOverlayService extends Service {
         String newEngine = intent.getStringExtra("sttEngine");
         boolean engineChanged = newEngine != null && !newEngine.equals(sttEngine);
         if (newEngine != null) sttEngine = newEngine;
+        String newTransEngine = intent.getStringExtra("translateEngine");
+        if (newTransEngine != null) translateEngine = newTransEngine;
+        if (intent.getBooleanExtra("llmKeyChanged", false) && llmTranslator != null) {
+            llmTranslator.reset(); // 새 키로 다시 시도
+        }
+
         boolean keyChanged = intent.getBooleanExtra("sttKeyChanged", false);
         if (engineChanged || keyChanged) {
             onlineFailed = false; // 다시 시도
@@ -934,12 +948,39 @@ public class SubtitleOverlayService extends Service {
     private void requestTranslation(NoteEntry entry) {
         entry.koState = NoteEntry.KoState.PENDING;
         notePanel.onEntryUpdated(entry);
+        // ① 기기 번역(빠름)을 먼저 표시
         translationEngine.translateFinal(entry.en, ko -> {
-            if (destroyed) return;
+            if (destroyed || entry.llm) return; // 이미 AI 번역이 들어왔으면 덮어쓰지 않음
+            if (ko == null && entry.koState == NoteEntry.KoState.DONE) return;
             entry.ko = ko;
             entry.koState = ko != null ? NoteEntry.KoState.DONE : NoteEntry.KoState.FAILED;
             notePanel.onEntryUpdated(entry);
         });
+
+        // ② AI 번역(문맥 반영)이 오면 교체
+        String key = anthropicKey();
+        if (!"llm".equals(translateEngine) || !llmTranslator.isUsable(key)) return;
+        llmTranslator.translate(key, entry.en, contextBefore(entry), ko -> {
+            if (destroyed || ko == null) return; // 실패하면 기기 번역 유지
+            entry.ko = ko;
+            entry.llm = true;
+            entry.koState = NoteEntry.KoState.DONE;
+            notePanel.onEntryUpdated(entry);
+        });
+    }
+
+    private String anthropicKey() {
+        return getSharedPreferences("secrets", MODE_PRIVATE).getString("anthropic_key", "").trim();
+    }
+
+    /** 이 문장 바로 앞의 영어 문장들 (오래된 것 → 최근) */
+    private java.util.List<String> contextBefore(NoteEntry entry) {
+        java.util.List<NoteEntry> all = notePanel.entries();
+        int idx = all.indexOf(entry);
+        if (idx < 0) idx = all.size();
+        java.util.List<String> ctx = new java.util.ArrayList<>();
+        for (int i = Math.max(0, idx - LLM_CONTEXT_LINES); i < idx; i++) ctx.add(all.get(i).en);
+        return ctx;
     }
 
     private void translateMissingEntries() {

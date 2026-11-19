@@ -33,6 +33,17 @@ android {
     buildFeatures {
         viewBinding true
     }
+
+    // 라이브러리들이 같은 이름의 라이선스/메타데이터 파일을 포함해 생기는 패키징 충돌 방지
+    packaging {
+        resources {
+            excludes += [
+                'META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*',
+                'META-INF/INDEX.LIST', 'META-INF/*.kotlin_module', 'META-INF/versions/9/module-info.class',
+                'META-INF/versions/**/OSGI-INF/MANIFEST.MF'
+            ]
+        }
+    }
 }
 
 dependencies {
@@ -52,6 +63,9 @@ dependencies {
 
     // 온라인 음성 인식(Deepgram) WebSocket 스트리밍
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    // ✨ AI 번역: Anthropic 공식 Java SDK (Claude API)
+    implementation 'com.anthropic:anthropic-java:3.3.0'
 
     testImplementation 'junit:junit:4.13.2'
 }

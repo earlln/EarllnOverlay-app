@@ -69,7 +69,8 @@ final class NoteAdapter extends RecyclerView.Adapter<NoteAdapter.VH> {
         } else if (hasKo) {
             h.ko.setVisibility(View.VISIBLE);
             h.ko.setTextColor(COLOR_KO);
-            h.ko.setText(e.fromScreen && !showEn ? "📷 " + e.ko : e.ko);
+            String ko = e.llm ? "✨ " + e.ko : e.ko; // AI 번역 표시
+            h.ko.setText(e.fromScreen && !showEn ? "📷 " + ko : ko);
         } else if (e.koState == NoteEntry.KoState.FAILED) {
             h.ko.setVisibility(View.VISIBLE);
             h.ko.setTextColor(COLOR_KO_DIM);

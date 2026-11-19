@@ -54,6 +54,38 @@ public class SettingsActivity extends AppCompatActivity {
         binding.toggleSttEngine.check(online ? R.id.btnEngineOnline : R.id.btnEngineOffline);
         updateEngineUi(online);
         updateKeyStatus();
+
+        boolean llm = !"basic".equals(settings.translateEngine);
+        binding.toggleTranslateEngine.check(llm ? R.id.btnTransLlm : R.id.btnTransBasic);
+        updateTranslateUi(llm);
+        updateAnthropicKeyStatus();
+    }
+
+    private void updateTranslateUi(boolean llm) {
+        binding.tvTranslateEngineDesc.setText(llm
+            ? "Claude가 앞뒤 문맥을 보고 자연스러운 한국어로 번역 · 인터넷과 API 키 필요 (실패 시 기본 번역)"
+            : "기기 내 Google ML Kit 번역 · 무료/오프라인 · 직역에 가까움");
+        binding.groupAnthropicKey.setVisibility(llm ? android.view.View.VISIBLE : android.view.View.GONE);
+    }
+
+    private void updateAnthropicKeyStatus() {
+        String key = AppSettings.anthropicKey(this);
+        binding.tvAnthropicKeyStatus.setText(key.isEmpty()
+            ? "⚠️ 저장된 키가 없습니다 (키가 없으면 기본 번역만 표시)"
+            : "✅ 키 저장됨 (끝자리 …" + key.substring(Math.max(0, key.length() - 4)) + ")");
+    }
+
+    private void saveAnthropicKey() {
+        String key = binding.etAnthropicKey.getText().toString().trim();
+        if (key.isEmpty()) {
+            android.widget.Toast.makeText(this, "키를 입력해 주세요", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        AppSettings.saveAnthropicKey(this, key);
+        binding.etAnthropicKey.setText("");
+        updateAnthropicKeyStatus();
+        settings.broadcastIfRunning(this, "llmKeyChanged");
+        android.widget.Toast.makeText(this, "Claude API 키를 저장했습니다", android.widget.Toast.LENGTH_SHORT).show();
     }
 
     private void updateEngineUi(boolean online) {
@@ -127,6 +159,16 @@ public class SettingsActivity extends AppCompatActivity {
         });
 
         binding.btnSaveKey.setOnClickListener(v -> saveKey());
+
+        binding.toggleTranslateEngine.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            if (!isChecked) return;
+            boolean llm = checkedId == R.id.btnTransLlm;
+            settings.translateEngine = llm ? "llm" : "basic";
+            updateTranslateUi(llm);
+            apply();
+        });
+
+        binding.btnSaveAnthropicKey.setOnClickListener(v -> saveAnthropicKey());
 
         binding.switchBottomSubtitle.setOnCheckedChangeListener((b, checked) -> {
             settings.bottomSubtitle = checked;

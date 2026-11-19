@@ -15,6 +15,8 @@ public final class NoteEntry {
     public final boolean fromScreen;
     public String ko;
     public KoState koState = KoState.NONE;
+    /** true: 번역이 ✨ AI 번역(Claude)으로 교체됨 */
+    public boolean llm = false;
 
     public NoteEntry(String en) {
         this(en, false);
