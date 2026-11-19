@@ -98,6 +98,14 @@ public class SubtitleOverlayService extends Service {
     private volatile String langMode = "both";
     private volatile String audioSource = "internal";
     private volatile String sttModelKey = "small";
+    /** 음성 인식 엔진: "online"(Deepgram) | "offline"(Vosk) */
+    private volatile String sttEngine = "online";
+    /** 온라인 인식이 실패해 이번 실행 동안 Vosk 로 대체 중 (엔진/키를 다시 설정하면 해제) */
+    private volatile boolean onlineFailed = false;
+    private int onlineRetries = 0;
+    private volatile DeepgramStreamer streamer;
+    /** 소리가 끊긴 뒤에도 이 시간 동안은 계속 보내 문장 끝을 인식시킴 */
+    private static final long ONLINE_TRAIL_MS = 1500;
     private volatile boolean bottomSubtitle = true;
 
     // ── 생명주기 / 스레드 ──
@@ -382,13 +390,24 @@ public class SubtitleOverlayService extends Service {
             bottomSubtitle = intent.getBooleanExtra("bottomSubtitle", true);
         }
 
+        String newEngine = intent.getStringExtra("sttEngine");
+        boolean engineChanged = newEngine != null && !newEngine.equals(sttEngine);
+        if (newEngine != null) sttEngine = newEngine;
+        boolean keyChanged = intent.getBooleanExtra("sttKeyChanged", false);
+        if (engineChanged || keyChanged) {
+            onlineFailed = false; // 다시 시도
+            onlineRetries = 0;
+        }
+
         String newModel = intent.getStringExtra("sttModel");
         boolean modelChanged = newModel != null && !newModel.equals(sttModelKey);
         if (newModel != null) sttModelKey = newModel;
 
         if (reactToChanges) {
             // control 스레드에서 직렬 처리 → 모델 로딩 중 변경되어도 캡처가 중복 생성되지 않음
-            if (modelChanged) {
+            if (engineChanged || keyChanged) {
+                runOnControl(this::switchEngine);
+            } else if (modelChanged) {
                 runOnControl(this::reloadModelIfNeeded);
             } else if (sourceChanged) {
                 runOnControl(() -> restartCapture(captureSession));
@@ -418,11 +437,74 @@ public class SubtitleOverlayService extends Service {
         // 구버전이 남긴 임시 zip 정리
         //noinspection ResultOfMethodCallIgnored
         new File(getFilesDir(), "vosk-model.zip").delete();
-        if (loadModel()) startCapture();
+        if (useOnline()) { // 온라인 엔진은 Vosk 모델 없이 바로 시작
+            startCapture();
+            return;
+        }
+        if (loadModel()) {
+            startCapture();
+            if ("online".equals(sttEngine) && deepgramKey().isEmpty()) {
+                setStatus("ℹ️ 지금은 오프라인(Vosk)으로 인식합니다\n⚙️ 설정에서 Deepgram API 키를 넣으면 더 정확한 온라인 인식을 씁니다");
+            }
+        }
+    }
+
+    // ── 음성 인식 엔진 선택 ────────────────────────────────────────────────
+
+    private String deepgramKey() {
+        return getSharedPreferences("secrets", MODE_PRIVATE).getString("deepgram_key", "").trim();
+    }
+
+    private boolean useOnline() {
+        return "online".equals(sttEngine) && !onlineFailed && !deepgramKey().isEmpty();
+    }
+
+    /** 엔진/키 변경 또는 온라인 실패 시: 현재 설정에 맞는 엔진으로 캡처 재시작 (control 스레드) */
+    private void switchEngine() {
+        stopCapture();
+        if (!useOnline() && voskModel == null && !loadModel()) return;
+        startCapture();
+    }
+
+    private DeepgramStreamer.Listener onlineListener(int session) {
+        return new DeepgramStreamer.Listener() {
+            @Override public void onConnected() {
+                mainHandler.post(() -> onlineRetries = 0);
+            }
+            @Override public void onPartial(String text) {
+                if (session == captureSession) mainHandler.post(() -> onPartialResult(text));
+            }
+            @Override public void onFinal(String text) {
+                if (session == captureSession && !TextNormalizer.isNoise(text)) {
+                    mainHandler.post(() -> onFinalResult(text));
+                }
+            }
+            @Override public void onError(String message, boolean fatal) {
+                mainHandler.post(() -> handleOnlineError(session, message, fatal));
+            }
+        };
+    }
+
+    /** 온라인 인식 오류: 일시적이면 재연결(최대 3회), 아니면 Vosk 로 전환 (main) */
+    private void handleOnlineError(int session, String msg, boolean fatal) {
+        if (destroyed || session != captureSession || !captureRunning) return;
+        if (!fatal && ++onlineRetries <= 3) {
+            setStatus("⚠️ 온라인 인식 연결 끊김 · 재연결 중 (" + onlineRetries + "/3)\n" + msg);
+            mainHandler.postDelayed(() -> runOnControl(() -> restartCapture(session)), 2000L * onlineRetries);
+            return;
+        }
+        onlineFailed = true;
+        setStatus((fatal ? "❌ " : "⚠️ ") + "온라인 인식 실패: " + msg
+            + "\n📴 오프라인(Vosk)으로 전환합니다 · ⚙️ 설정에서 엔진을 다시 고르면 재시도");
+        runOnControl(this::switchEngine);
     }
 
     private void reloadModelIfNeeded() {
         VoskModelManager.ModelSpec want = VoskModelManager.ModelSpec.fromKey(sttModelKey);
+        if (useOnline()) { // 온라인 사용 중: 오프라인 모델은 다음에 필요할 때 새로 로드
+            if (voskModel != null && want != loadedSpec) releaseModel();
+            return;
+        }
         if (want == loadedSpec && voskModel != null) return;
         stopCapture();
         releaseModel();
@@ -470,14 +552,18 @@ public class SubtitleOverlayService extends Service {
     }
 
     private void startCapture() {
-        if (destroyed || paused || voskModel == null || captureRunning) return;
+        if (destroyed || paused || captureRunning) return;
+        final boolean online = useOnline();
+        if (!online && voskModel == null) return;
 
-        Recognizer rec;
-        try {
-            rec = new Recognizer(voskModel, SAMPLE_RATE);
-        } catch (Exception e) {
-            setStatus("❌ 음성 인식기 생성 실패: " + e.getMessage());
-            return;
+        Recognizer rec = null;
+        if (!online) {
+            try {
+                rec = new Recognizer(voskModel, SAMPLE_RATE);
+            } catch (Exception e) {
+                setStatus("❌ 음성 인식기 생성 실패: " + e.getMessage());
+                return;
+            }
         }
 
         int minBuf = AudioRecord.getMinBufferSize(
@@ -513,7 +599,7 @@ public class SubtitleOverlayService extends Service {
 
         if (!isUsable(ar)) {
             releaseQuietly(ar);
-            rec.close();
+            if (rec != null) rec.close();
             setStatus("❌ 오디오 녹음 초기화 실패\n다른 앱이 마이크를 사용 중인지 확인해 주세요");
             return;
         }
@@ -525,7 +611,7 @@ public class SubtitleOverlayService extends Service {
         }
         if (ar.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
             releaseQuietly(ar);
-            rec.close();
+            if (rec != null) rec.close();
             setStatus("❌ 녹음 시작 실패\n다른 앱이 마이크를 사용 중일 수 있습니다");
             return;
         }
@@ -534,14 +620,24 @@ public class SubtitleOverlayService extends Service {
         audioRecord = ar;
         captureRunning = true;
         final int session = ++captureSession;
+
+        DeepgramStreamer dg = null;
+        if (online) {
+            dg = new DeepgramStreamer(deepgramKey(), onlineListener(session));
+            dg.connect();
+            streamer = dg;
+        }
+
         final boolean isInternal = internal;
         final AudioRecord arFinal = ar;
         final Recognizer recFinal = rec;
-        captureThread = new Thread(() -> captureLoop(session, arFinal, recFinal, isInternal), "VoskCapture");
+        final DeepgramStreamer dgFinal = dg;
+        captureThread = new Thread(() -> captureLoop(session, arFinal, recFinal, isInternal, dgFinal), "AudioCapture");
         captureThread.setDaemon(true);
         captureThread.start();
 
-        setStatus(statusMsg + (translationEngine.isReady() ? "" : "\n(번역 모델 준비 중...)"));
+        String engineLabel = online ? "☁️ 온라인 인식(Deepgram) · " : "📴 오프라인 인식(Vosk) · ";
+        setStatus(engineLabel + statusMsg + (translationEngine.isReady() ? "" : "\n(번역 모델 준비 중...)"));
         mainHandler.post(() -> translationEngine.resetPending());
     }
 
@@ -560,6 +656,12 @@ public class SubtitleOverlayService extends Service {
         if (ar != null) {
             releaseQuietly(ar);
             audioRecord = null;
+        }
+        DeepgramStreamer dg = streamer;
+        streamer = null;
+        if (dg != null) {
+            Log.d(TAG, String.format(java.util.Locale.US, "Deepgram 전송 %.1f초", dg.sentSeconds()));
+            dg.close();
         }
         // 캡처 스레드는 recLock 안에서 captureRunning 을 다시 확인하므로, 여기서 닫아도 안전
         synchronized (recLock) {
@@ -630,7 +732,7 @@ public class SubtitleOverlayService extends Service {
 
     // ── 캡처 루프 (capture 스레드) ────────────────────────────────────────────
 
-    private void captureLoop(int session, AudioRecord ar, Recognizer rec, boolean internal) {
+    private void captureLoop(int session, AudioRecord ar, Recognizer rec, boolean internal, DeepgramStreamer dg) {
         byte[] buffer = new byte[4096]; // 16kHz mono 16bit 기준 128ms
         String lastPartial = "";
         long segmentStart = 0;
@@ -642,6 +744,10 @@ public class SubtitleOverlayService extends Service {
         boolean quietHinted = false;
         boolean fallbackRequested = false;
         boolean deviceError = false;
+        // 온라인: 소리가 있을 때만 전송 (요금 절약). 말이 시작될 때 앞부분이 잘리지 않도록 직전 0.5초 보관
+        boolean sending = false;
+        long lastSoundAt = 0;
+        java.util.ArrayDeque<byte[]> preroll = new java.util.ArrayDeque<>();
 
         while (captureRunning && session == captureSession) {
             int n;
@@ -697,6 +803,29 @@ public class SubtitleOverlayService extends Service {
                         runOnControl(() -> restartCapture(s));
                     }
                 }
+            }
+
+            if (dg != null) {
+                if (peak >= SOUND_PEAK_THRESHOLD) {
+                    if (!sending) {
+                        for (byte[] p : preroll) dg.sendAudio(p, p.length);
+                        preroll.clear();
+                        sending = true;
+                    }
+                    lastSoundAt = now;
+                } else if (sending && now - lastSoundAt > ONLINE_TRAIL_MS) {
+                    sending = false;
+                    dg.finalizeUtterance(now); // 지금까지 들은 문장 확정 요청
+                }
+                if (sending) {
+                    dg.sendAudio(buffer, n);
+                } else {
+                    preroll.addLast(java.util.Arrays.copyOf(buffer, n));
+                    if (preroll.size() > 4) preroll.removeFirst();
+                    dg.keepAlive(now);
+                }
+                dg.tick(now);
+                continue; // 온라인 모드는 Vosk 처리를 건너뜀
             }
 
             String finalJson = null;

@@ -16,6 +16,7 @@ final class AppSettings {
     String langMode = "both";       // both | ko | en
     String audioSource = "internal"; // internal | mic
     String sttModel = "small";       // small | large
+    String sttEngine = "online";     // online(Deepgram) | offline(Vosk)
     boolean bottomSubtitle = true;
 
     static AppSettings load(Context ctx) {
@@ -27,6 +28,7 @@ final class AppSettings {
         s.langMode = p.getString("langMode", "both");
         s.audioSource = p.getString("audioSource", "internal");
         s.sttModel = p.getString("sttModel", "small");
+        s.sttEngine = p.getString("sttEngine", "online");
         s.bottomSubtitle = p.getBoolean("bottomSubtitle", true);
         return s;
     }
@@ -38,6 +40,7 @@ final class AppSettings {
             .putString("langMode", langMode)
             .putString("audioSource", audioSource)
             .putString("sttModel", sttModel)
+            .putString("sttEngine", sttEngine)
             .putBoolean("bottomSubtitle", bottomSubtitle)
             .apply();
     }
@@ -48,16 +51,36 @@ final class AppSettings {
         intent.putExtra("langMode", langMode);
         intent.putExtra("audioSource", audioSource);
         intent.putExtra("sttModel", sttModel);
+        intent.putExtra("sttEngine", sttEngine);
         intent.putExtra("bottomSubtitle", bottomSubtitle);
     }
 
     /** 실행 중인 자막 서비스에 즉시 반영 */
     void broadcastIfRunning(Context ctx) {
+        broadcastIfRunning(ctx, false);
+    }
+
+    /** keyChanged=true 면 서비스가 새 API 키로 온라인 인식을 다시 연결 */
+    void broadcastIfRunning(Context ctx, boolean keyChanged) {
         if (!SubtitleOverlayService.isRunning) return;
         Intent intent = new Intent(SubtitleOverlayService.ACTION_UPDATE_SETTINGS);
         intent.setPackage(ctx.getPackageName()); // 앱 내부로만 전달
         putExtras(intent);
+        intent.putExtra("sttKeyChanged", keyChanged);
         ctx.sendBroadcast(intent);
+    }
+
+    // ── Deepgram API 키 (백업에서 제외되는 별도 저장소) ──
+
+    private static final String SECRETS = "secrets";
+
+    static String deepgramKey(Context ctx) {
+        return ctx.getSharedPreferences(SECRETS, Context.MODE_PRIVATE).getString("deepgram_key", "").trim();
+    }
+
+    static void saveDeepgramKey(Context ctx, String key) {
+        ctx.getSharedPreferences(SECRETS, Context.MODE_PRIVATE).edit()
+            .putString("deepgram_key", key == null ? "" : key.trim()).apply();
     }
 
     private static int clamp(int v, int min, int max) {

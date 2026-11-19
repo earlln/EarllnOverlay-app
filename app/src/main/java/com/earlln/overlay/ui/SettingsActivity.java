@@ -49,6 +49,38 @@ public class SettingsActivity extends AppCompatActivity {
         binding.tvSttModelDesc.setText(large ? R.string.stt_model_large_desc : R.string.stt_model_small_desc);
 
         binding.switchBottomSubtitle.setChecked(settings.bottomSubtitle);
+
+        boolean online = !"offline".equals(settings.sttEngine);
+        binding.toggleSttEngine.check(online ? R.id.btnEngineOnline : R.id.btnEngineOffline);
+        updateEngineUi(online);
+        updateKeyStatus();
+    }
+
+    private void updateEngineUi(boolean online) {
+        binding.tvSttEngineDesc.setText(online
+            ? "Deepgram Nova-3 클라우드 인식 · 가장 정확하고 문장부호 자동 · 인터넷과 API 키 필요"
+            : "Vosk 기기 내 인식 · 무료/인터넷 불필요 · 정확도는 온라인보다 낮음");
+        binding.groupDeepgramKey.setVisibility(online ? android.view.View.VISIBLE : android.view.View.GONE);
+    }
+
+    private void updateKeyStatus() {
+        String key = AppSettings.deepgramKey(this);
+        binding.tvKeyStatus.setText(key.isEmpty()
+            ? "⚠️ 저장된 키가 없습니다 (키가 없으면 오프라인으로 인식)"
+            : "✅ 키 저장됨 (끝자리 …" + key.substring(Math.max(0, key.length() - 4)) + ")");
+    }
+
+    private void saveKey() {
+        String key = binding.etDeepgramKey.getText().toString().trim();
+        if (key.isEmpty()) {
+            android.widget.Toast.makeText(this, "키를 입력해 주세요", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        AppSettings.saveDeepgramKey(this, key);
+        binding.etDeepgramKey.setText("");
+        updateKeyStatus();
+        settings.broadcastIfRunning(this, true); // 실행 중이면 새 키로 다시 연결
+        android.widget.Toast.makeText(this, "API 키를 저장했습니다", android.widget.Toast.LENGTH_SHORT).show();
     }
 
     private void setupListeners() {
@@ -85,6 +117,16 @@ public class SettingsActivity extends AppCompatActivity {
             binding.tvSttModelDesc.setText(large ? R.string.stt_model_large_desc : R.string.stt_model_small_desc);
             apply();
         });
+
+        binding.toggleSttEngine.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            if (!isChecked) return;
+            boolean online = checkedId == R.id.btnEngineOnline;
+            settings.sttEngine = online ? "online" : "offline";
+            updateEngineUi(online);
+            apply();
+        });
+
+        binding.btnSaveKey.setOnClickListener(v -> saveKey());
 
         binding.switchBottomSubtitle.setOnCheckedChangeListener((b, checked) -> {
             settings.bottomSubtitle = checked;
