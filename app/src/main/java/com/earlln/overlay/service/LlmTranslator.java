@@ -98,7 +98,8 @@ final class LlmTranslator {
                 try {
                     ko = request(apiKey, line, context);
                 } catch (com.anthropic.errors.BadRequestException e) {
-                    if (!useFallbacks) throw e;
+                    // fallbacks 파라미터 자체를 거부한 경우에만 빼고 재시도 (크레딧 부족 등 다른 400 은 그대로 처리)
+                    if (!useFallbacks || !LlmErrors.isFallbackRejection(e.getMessage())) throw e;
                     Log.w(TAG, "fallbacks 없이 재시도", e);
                     useFallbacks = false;
                     ko = request(apiKey, line, context);
@@ -106,16 +107,18 @@ final class LlmTranslator {
             } catch (UnauthorizedException | PermissionDeniedException e) {
                 disabledForSession = true;
                 Log.e(TAG, "Claude API 키 오류", e);
-                main.post(() -> status.onStatus(
-                    "❌ Claude API 키가 올바르지 않습니다\n✨ AI 번역을 끄고 기본 번역으로 표시합니다 (⚙️ 설정에서 키 확인)"));
+                final String friendly = LlmErrors.friendly(e.statusCode(), e.getMessage());
+                main.post(() -> status.onStatus("❌ " + friendly + "\n(그동안 기본 번역으로 표시합니다)"));
             } catch (AnthropicServiceException e) {
                 Log.w(TAG, "Claude 번역 실패 (" + e.statusCode() + ")", e);
-                if (e.statusCode() == 400 || e.statusCode() == 402) {
+                final String friendly = LlmErrors.friendly(e.statusCode(), e.getMessage());
+                if (e.statusCode() == 400 || e.statusCode() == 402 || e.statusCode() == 404) {
                     // 크레딧 부족 등 반복해도 소용없는 오류 → 이번 실행 동안 중지
+                    // ❌ 로 시작하는 안내는 자동으로 사라지지 않음
                     disabledForSession = true;
-                    final String msg = e.getMessage();
-                    main.post(() -> status.onStatus("⚠️ Claude 번역을 사용할 수 없습니다 (" + msg
-                        + ")\n기본 번역으로 표시합니다"));
+                    main.post(() -> status.onStatus("❌ " + friendly + "\n(그동안 기본 번역으로 표시합니다)"));
+                } else if (e.statusCode() == 429) {
+                    main.post(() -> status.onStatus("⚠️ " + friendly));
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Claude 번역 실패 (네트워크 등)", e); // 이 문장은 기본 번역 유지
